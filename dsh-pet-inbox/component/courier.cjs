@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const {spawn} = require('node:child_process');
 
-module.exports = function attachCourier({pets,config,save,queue,settingsMenu,root}) {
+module.exports = function attachCourier({pets,config,save,queue,settingsMenu,root,animate}) {
   ipcMain.on('inbox:carry',(event,received)=>{
     const pet = BrowserWindow.fromWebContents(event.sender);
     if(!pet || !Array.from(pets.values()).includes(pet) || event.senderFrame !== event.sender.mainFrame) return;
@@ -23,7 +23,7 @@ module.exports = function attachCourier({pets,config,save,queue,settingsMenu,roo
       const result=await queue({action:'deliver',paths,folder});
       if(!result) return notify('搬运失败 · 请查看收纳记录');
       if(result.success>0 && !config.reduced) {
-        try { await require('./archive.cjs')(pet,[{folder,count:result.success,name:path.basename(paths[0])}]); }
+        try { await animate(pet,[{folder,count:result.success,name:path.basename(paths[0])}]); }
         catch(e) { console.warn('[dsh-pet-inbox] 搬运动画未播放',e.message); }
       }
       notify(result.message);
@@ -70,6 +70,3 @@ module.exports = function attachCourier({pets,config,save,queue,settingsMenu,roo
     ]).popup({window:pet,callback:()=>setTimeout(()=>{if(!selected) notify('已取消 · 文件仍在原处');},50)});
   });
 };
-
-
-

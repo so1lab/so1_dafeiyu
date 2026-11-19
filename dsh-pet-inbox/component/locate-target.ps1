@@ -1,4 +1,4 @@
-﻿param([Parameter(Mandatory=$true)][string]$Folder,[switch]$NoGateway,[switch]$Reveal,[long]$PetHwnd=0,[switch]$Snapshot,[long]$CloseHwnd=0)
+﻿param([Parameter(Mandatory=$true)][string]$Folder,[switch]$NoGateway,[switch]$Reveal,[long]$PetHwnd=0,[switch]$Snapshot,[switch]$OpenAndLocate,[switch]$Prepared,[long]$CloseHwnd=0)
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
 Add-Type @"
@@ -79,8 +79,7 @@ function VerifyDesktop($allowParent){
         }catch{}
     }
 }
-$r=VerifyDesktop $false
-if(!$r){
+function FindExplorerItem {
     $parent=[IO.Path]::GetDirectoryName($folderPath)
     foreach($win in $shell.Windows()){
         try{
@@ -95,20 +94,72 @@ if(!$r){
                 if(-not [PetHit]::SetForegroundWindow($hw)){(New-Object -ComObject WScript.Shell).SendKeys("%");$null=[PetHit]::SetForegroundWindow($hw)}
                 $null=[PetHit]::SetWindowPos($hw,[intptr]::Zero,0,0,0,0,0x13)
                 $win.Document.SelectItem($item,29)
-                Start-Sleep -Milliseconds 130
+
             }
             $list=$scope.FindFirst($desc,[Windows.Automation.PropertyCondition]::new($ae::ClassNameProperty,'UIItemsView'))
             if(!$list){continue}
             $r=Locate $list $item $hw 'explorer'
-            if($r){$r.hwnd=[long]$hw;break}
+            if($r){$r.hwnd=[long]$hw;return $r}
         }catch{}
     }
 }
+if($Prepared){
+    # Receive the resolved destination as data after UI Automation and COM have loaded.
+    [Console]::Out.WriteLine('ready')
+    $line=[Console]::ReadLine()
+    if(!$line){exit}
+    $decoded=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($line))
+    $reuseParent=[IO.Path]::GetDirectoryName($folderPath)
+    $reuseHwnd=0
+    if($decoded.StartsWith('{')){
+        $request=$decoded|ConvertFrom-Json
+        $folderPath=[IO.Path]::GetFullPath($request.folder)
+        $reuseHwnd=[long]$request.reuseHwnd
+    }else{$folderPath=[IO.Path]::GetFullPath($decoded)}
+    if(!(Test-Path -LiteralPath $folderPath -PathType Container)){'null';exit}
+    $r=VerifyDesktop $false
+    if(!$r){$r=FindExplorerItem}
+
+    if($r){$r|ConvertTo-Json -Compress;exit}
+    $OpenAndLocate=$true
+}
+if($OpenAndLocate){
+    # Window ownership and icon readiness are checked inside the same process.
+    $before=@($shell.Windows() | ForEach-Object {[long]$_.HWND})
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    $reused=$false
+    if($reuseHwnd){
+        foreach($win in $shell.Windows()){
+            try{
+                if([long]$win.HWND -ne $reuseHwnd -or $win.Document.Folder.Self.Path -ne $reuseParent){continue}
+                $scope=$ae::FromHandle([intptr]$reuseHwnd)
+                $tabs=$scope.FindAll($desc,[Windows.Automation.PropertyCondition]::new($ae::ControlTypeProperty,[Windows.Automation.ControlType]::TabItem))
+                if($tabs.Count -gt 1){continue}
+                $win.Navigate2([IO.Path]::GetDirectoryName($folderPath))
+                $reused=$true
+                break
+            }catch{}
+        }
+    }
+    if($reuseHwnd -and !$reused){'null';exit}
+    if(!$reused){
+    Start-Process explorer.exe -ArgumentList ('/select,"'+$folderPath+'"')
+    }
+    $Reveal=$true
+    do {
+        $r=FindExplorerItem
+        if($r){
+            $r.opened=($before -notcontains $r.hwnd -or ($reused -and $r.hwnd -eq $reuseHwnd))
+            $r.readyMs=$watch.ElapsedMilliseconds
+            $r|ConvertTo-Json -Compress
+            exit
+        }
+        Start-Sleep -Milliseconds 40
+    }while($watch.ElapsedMilliseconds -lt 3200)
+    'null'
+    exit
+}
+$r=VerifyDesktop $false
+if(!$r){$r=FindExplorerItem}
 if(!$r -and !$NoGateway){$r=VerifyDesktop $true}
 if($r){$r|ConvertTo-Json -Compress}else{'null'}
-
-
-
-
-
-

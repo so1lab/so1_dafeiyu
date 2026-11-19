@@ -62,8 +62,9 @@ def install_helper(opts):
             for item in SOURCE.iterdir():
                 if item.is_file():
                     atomic_write(dest/item.name,item.read_bytes())
+            atomic_write(dest/"runtime.json",json.dumps({"python":sys.executable}).encode())
             atomic_write(preload,updated.encode())
-            print("0.9.0 已更新，请重启桌宠。")
+            print("0.14.0 已更新，请重启桌宠。")
             return
         if dest.exists() or START in changes[preload] or changes[controls].count(INPUT)!=1 or code.count(HOOK)!=1:
             raise ValueError("上游版本或组件目录不匹配。")
@@ -72,7 +73,7 @@ def install_helper(opts):
         changes[preload] += START + (SOURCE/"pet-hook.js").read_text("utf-8-sig").rstrip() + "\n" + END
         with tempfile.TemporaryDirectory(dir=base) as tmp:
             stage = Path(tmp)/"component"
-            shutil.copytree(SOURCE,stage)
+            shutil.copytree(SOURCE,stage,ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
             (stage/"runtime.json").write_text(json.dumps({"python":sys.executable}),encoding="utf8")
             stage.rename(dest)
     completed = []
@@ -90,7 +91,7 @@ def install_helper(opts):
             shutil.rmtree(dest)
         raise
     if opts.uninstall and dest.is_dir():
-        for name in [p.name for p in SOURCE.iterdir()] + ["runtime.json"]:
+        for name in [p.name for p in SOURCE.iterdir() if p.is_file()] + ["runtime.json"]:
             (dest/name).unlink(missing_ok=True)
         if not any(dest.iterdir()):
             dest.rmdir()
@@ -124,6 +125,14 @@ def install(opts):
     if wired in original:
         atomic_write(main,original.replace(wired,plain))
     try:
+        # Copy the component-owned clips before enabling the new entry point.
+        # User data and upstream animation files are separate from these names.
+        clips=Path(__file__).resolve().parent/"assets"
+        if not opts.uninstall:
+            target=base.parents[1]/"assets/webm"
+            target.mkdir(parents=True,exist_ok=True)
+            for clip in clips.glob("*.webm"):
+                atomic_write(target/clip.name,clip.read_bytes())
         install_helper(opts)
         if not opts.uninstall:
             atomic_write(main,main.read_bytes().replace(plain,wired))
@@ -141,6 +150,3 @@ if __name__ == "__main__":
         install(parser.parse_args())
     except (ValueError,OSError) as e:
         parser.exit(1,str(e)+"\n")
-
-
-

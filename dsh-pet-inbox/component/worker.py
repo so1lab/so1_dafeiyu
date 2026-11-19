@@ -72,6 +72,7 @@ def move(source, dest, expected):
         temp.unlink(missing_ok=True)
 
 
+from warehouse import ALIASES, actual, everyday, media_type
 from context import shortlist
 from filing import inventory, choose, matches
 
@@ -80,7 +81,29 @@ def categories(root):
     return list(dict.fromkeys(custom + [x[0] for x in CATEGORIES] + list(TYPES) + ["待分类"]))
 
 def run(req, db, root):
+    from desk_moves import setup,recent,transfer,history
+    setup(db)
     action = req["action"]
+    if action in ("desk_move","desk_undo"):return transfer(db,root,req,identity,move)
+    if action in ("catalog","adjust","undo","relink"):
+        from sync_library import sync
+        sync(db,root,identity)
+    if action=="relink":
+        p=Path(req["path"]).resolve()
+        row=db.execute("select dst,sig,status from items where rowid=?",(req["id"],)).fetchone()
+        if not row or not p.is_file() or not p.is_relative_to(root):
+            raise ValueError("请选择仓库内的文件")
+        if Path(row[0]).exists() and Path(row[0])!=p:
+            raise ValueError("原位置仍有文件，无法关联")
+        duplicates=db.execute("select rowid,status from items where dst=? and rowid<>? and status in ('已同步','已收纳')",(str(p),req["id"])).fetchall()
+        if any(st=="已收纳" for _,st in duplicates):raise ValueError("所选文件已有收纳记录")
+        for rid,_ in duplicates:
+            db.execute("delete from items where rowid=?",(rid,))
+            for tab in ("catalog","filing","indexed","proposals"):db.execute("delete from "+tab+" where item=?",(rid,))
+        db.execute("update items set dst=?,sig=?,status='已同步' where rowid=?",(str(p),json.dumps(json.loads(identity(p))[:2]+[-1,-1]),req["id"]))
+        db.commit()
+        sync(db,root,identity)
+        return {"message":"已更新文件位置"}
     if action == "sample":
         p = Path(req["file"])
         if not p.is_absolute() or p.is_symlink() or not p.is_file() or p.resolve().is_relative_to(root):
@@ -123,7 +146,7 @@ def run(req, db, root):
         db.commit()
         return {"message":"已记住："+term+" → "+dest}
     if action == "adjust":
-        row = db.execute("select dst,sig from items where rowid=? and status='已收纳'", (req["id"],)).fetchone()
+        row = db.execute("select dst,sig,status from items where rowid=? and status in ('已收纳','已同步')", (req["id"],)).fetchone()
         if not row:
             raise ValueError("文件当前不可调整")
         src = Path(row[0])
@@ -149,14 +172,15 @@ def run(req, db, root):
             db.execute("update items set status='需核对' where rowid=?",(req["id"],))
             db.commit()
             raise
-        db.execute("update items set status='已收纳',dst=?,sig=? where rowid=?",(str(dest),identity(dest),req["id"]))
+        db.execute("update items set status=?,dst=?,sig=? where rowid=?",(row[2],str(dest),identity(dest),req["id"]))
         db.execute("update catalog set category=? where item=?",(str(folder.relative_to(root)),req["id"]))
         db.execute("delete from proposals where item=?",(req["id"],))
         db.execute("update filing set suggestion='',why='用户手动确认归属' where item=?",(req["id"],))
         db.commit()
         return {"message":"分类已调整"}
     if action == "catalog":
-        return {"entries": records(db)}
+        batch_ids=dict(db.execute("select rowid,batch from items where batch is not null"))
+        return {"entries": [dict(row,batch=batch_ids.get(row["id"])) for row in records(db)],"folders":inventory(root),"root":str(root),"history":history(db,root),"moves":recent(db,root),"examples":[(Path(dst).stem,Path(dst).parent.relative_to(root).as_posix()) for (dst,) in db.execute("select m.dst from desk_moves m join items i on i.rowid=m.item and i.dst=m.dst where m.undone=0 order by m.rowid desc limit 150") if Path(dst).is_relative_to(root)]}
     if action == "history":
         rows = db.execute("select src,dst,status,reason from items order by rowid desc limit 80")
         return {"rows": list(rows)}
@@ -183,7 +207,7 @@ def run(req, db, root):
         return {"message": f"已撤销 {count} 个，需核对 {conflicts} 个"}
     if action not in ("drop", "deliver"):
         raise ValueError("未知操作")
-    batch = uuid.uuid4().hex
+    batch = req.get("batch") or uuid.uuid4().hex
     counts = [0, 0, 0]
     summaries = []
     deliveries = {}
@@ -209,7 +233,7 @@ def run(req, db, root):
             plan = req.get("plans", {}).get(raw, {})
             if plan.get("sig") != sig:
                 plan = {}
-            cat,tags,reason,is_project = choose(src,body,folders,aliases,cat,plan,set(TYPES)|{k for k,_ in CATEGORIES})
+            cat,tags,reason,is_project = choose(src,body,folders,aliases,cat,plan,set(TYPES)|set(ALIASES)|{n for names in ALIASES.values() for n in names}|{k for k,_ in CATEGORIES})
             suggestion=""
             if cat=="待确认" and reason.startswith("缺少") and plan.get("folder") in folders:
                 from filing import semantic_route
@@ -220,6 +244,15 @@ def run(req, db, root):
                 from filing import purpose_folder
                 cat,reason=purpose_folder(src,body,plan,folders,default,root)
                 suggestion=""
+            if not is_project:
+                daily=everyday(src,body)
+                if daily and not (daily in ("照片图片","音频录音","视频") and cat in ("财务票据","合同协议","学习参考","生活事务","旅行出行","模板素材","会议记录")):
+                    cat,reason=daily,"日常资料用途："+daily
+                cat={"模板":"模板素材","参考资料":"学习参考","宣传素材":"模板素材"}.get(cat,cat)
+                cat=actual(root,cat)
+            media=media_type(src)
+            if media and media not in tags:
+                tags.append(media)
             summary = plan.get("summary") or f"{src.stem[:28]} · {tags[0]}（本地判断）"
             if action == "deliver":
                 folder = Path(req["folder"])
@@ -258,6 +291,7 @@ def run(req, db, root):
             if action=="drop" and cat=="待确认":
                 pending.append(row)
             group = deliveries.setdefault(str(folder),dict(folder=str(folder),name=dest.name,count=0))
+            group.setdefault("ids",[]).append(row)
             group['count'] += 1
             summaries.append(summary)
             counts[int(action == "drop" and cat == "待确认")] += 1
@@ -284,6 +318,7 @@ if __name__ == "__main__":
     root = Path(sys.argv[1]).resolve()
     root.mkdir(parents=True, exist_ok=True)
     with contextlib.closing(sqlite3.connect(sys.argv[2])) as db:
+        db.execute("create table if not exists indexed(item integer primary key,stamp text)")
         db.execute("create table if not exists proposals(item integer primary key, proposed text)")
         db.execute("create table if not exists aliases(root,term collate nocase,dest,primary key(root,term))")
         db.execute("create table if not exists filing(item integer primary key,tags,why,suggestion)")
@@ -295,4 +330,3 @@ if __name__ == "__main__":
             db.execute("update items set status='需核对',reason='上次中断，请核对原位置与目标位置' where status in ('移动中','撤销中','调整中')")
         db.commit()
         print(json.dumps(run(req, db, root)), flush=True)
-

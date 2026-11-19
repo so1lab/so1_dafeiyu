@@ -34,4 +34,3 @@ with tempfile.TemporaryDirectory() as workspace:
     doc.unlink()
     assert not call("catalog")["entries"][0]["available"]
     print("PASS: 摘要、分类、台账、撤销定位、文件移走后禁用定位")
-

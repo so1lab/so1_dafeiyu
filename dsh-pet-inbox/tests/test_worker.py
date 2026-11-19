@@ -24,6 +24,3 @@ with tempfile.TemporaryDirectory() as t:
     call(action="undo")
     assert files[0].read_text()=="existing" and files[1].read_text()=="invoice" and files[2].exists()
     print("PASS: batch, content, duplicate names, fallback, directory skip, undo conflict")
-
-
-

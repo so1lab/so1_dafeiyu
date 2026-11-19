@@ -32,5 +32,21 @@ def shortlist(db,root,folders,text):
         words=terms(folder+" "+" ".join(s for _,s in examples)) & query
         score=sum(1/counts[w] for w in words)
         scored.append((score,folder,examples))
+    # Count each gesture once per destination; only current, unreverted placements teach.
+    votes={}
+    for batch,dst in db.execute("""select m.batch,m.dst from desk_moves m join items i
+        on i.rowid=m.item and i.dst=m.dst where m.undone=0 order by m.rowid desc limit 400"""):
+        p=Path(dst)
+        if not p.is_relative_to(root) or not p.is_file():continue
+        folder=p.parent.relative_to(root).as_posix()
+        overlap=query & terms(p.stem)
+        if folder in profiles and overlap:
+            key=(folder,batch)
+            if key not in votes or len(overlap)>votes[key][0]:votes[key]=(len(overlap),p.name)
+    for i,(score,folder,examples) in enumerate(scored):
+        hits=sorted((hit for (dest,_),hit in votes.items() if dest==folder),reverse=True)[:2]
+        if hits:
+            scored[i]=(score+sum(min(4,n) for n,_ in hits),folder,
+                       [(n,'用户曾手动移入此目录：'+name) for n,name in hits]+examples[:1])
     # 限制历史正文预算；目录名和明确关联过的材料提供可核对的判断依据。
     return [dict(folder=f,examples=[s[:360] for _,s in ex]) for _,f,ex in sorted(scored,key=lambda row:-row[0])[:8]]

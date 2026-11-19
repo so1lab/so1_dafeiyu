@@ -22,9 +22,9 @@ with tempfile.TemporaryDirectory() as tmp:
     call("drop",paths=[str(base/name) for name in examples])
     rows={r["name"]:r for r in call("catalog")["entries"]}
     assert all(Path(rows[n]["path"]).parent==project for n in list(examples)[:3])
-    assert rows["模板.txt"]["category"]=="模板" and rows["报销.txt"]["category"]=="财务票据"
+    assert rows["模板.txt"]["category"]=="模板素材" and rows["报销.txt"]["category"]=="财务票据"
     poster=rows["海报定稿.png"]
-    assert poster["category"]=="宣传素材" and not poster["suggestion"]
+    assert poster["category"]=="模板素材" and not poster["suggestion"]
     call("adjust",id=poster["id"],folder=str(project))
     call("alias",id=poster["id"],term="青禾秋展")
     follow=base/"补充资料.txt"

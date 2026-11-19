@@ -33,7 +33,7 @@ def sample_text(path):
                     tag = node.tag.split("}")[-1]
                     if tag == "sheet":
                         parts.append(node.get("name",""))
-                    if tag == "t" and node.text:
+                    if (tag == "t" or (ext==".xlsx" and tag=="v")) and node.text:
                         parts.append(node.text)
             return " ".join(parts)[:32768]
     return ""
@@ -52,12 +52,12 @@ def records(db):
     # 台账使用操作日志的 rowid，撤销后改查原位置。相同路径多次投放只显示最新记录。
     import json
     from pathlib import Path
-    rows = db.execute("""select i.rowid,i.src,i.dst,i.status,i.sig,c.category,c.summary,c.added,c.search_text,f.tags,f.why,f.suggestion,p.proposed
-                         from items i left join catalog c on c.item=i.rowid left join filing f on f.item=i.rowid left join proposals p on p.item=i.rowid
-                         where i.status in ('已收纳','已撤销','需核对') order by i.rowid desc""")
+    rows = db.execute("""select i.rowid,i.src,i.dst,i.status,i.sig,c.category,c.summary,c.added,c.search_text,f.tags,f.why,f.suggestion,p.proposed,ix.stamp
+                         from items i left join catalog c on c.item=i.rowid left join filing f on f.item=i.rowid left join proposals p on p.item=i.rowid left join indexed ix on ix.item=i.rowid
+                         where i.status in ('已收纳','已同步','已撤销','需核对') order by i.rowid desc""")
     seen = set()
     result = []
-    for rid,src,dst,status,sig,cat,summary,added,search_text,tags,why,suggestion,proposed in rows:
+    for rid,src,dst,status,sig,cat,summary,added,search_text,tags,why,suggestion,proposed,stamp in rows:
         path = Path(src if status == "已撤销" else dst)
         if path in seen:
             continue
@@ -68,5 +68,5 @@ def records(db):
         except (OSError,ValueError,TypeError):
             present = False
         result.append(dict(id=rid,name=path.name,category=cat or "历史文件",summary=summary or "旧版本记录，未生成摘要。",
-                           tags=json.loads(tags or "[]"),why=why or "",proposed=proposed or "",suggestion=suggestion or "",search_text=search_text or "",path=str(path),added=added or "",status=status if present else "位置待核对",available=present))
+                           tags=json.loads(tags or "[]"),why=why or "",proposed=proposed or "",suggestion=suggestion or "",indexed=stamp or added or "",modified=stat.st_mtime if present else 0,search_text=search_text or "",path=str(path),added=added or "",status=status if present else "位置待核对",available=present))
     return result
