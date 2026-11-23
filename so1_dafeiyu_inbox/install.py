@@ -32,6 +32,8 @@ def install_helper(opts):
                 opts.location/"dsh-pet/runtime/electron-helper") if (p/"sprite/input.js").is_file()), None)
     if base is None:
         raise ValueError("未找到完整的 electron-helper。")
+    # Windows 版本隔离部署可能通过 junction 暴露 runtime；后续路径按真实插件根解析。
+    base = base.resolve()
     main, preload, controls = [base/p for p in ("main.js","preload.js","sprite/input.js")]
     dest = base/"dsh-pet-inbox-v2"
     changes = {}
@@ -104,6 +106,7 @@ def install(opts):
                 opts.location/"dsh-pet/runtime/electron-helper") if (p/"sprite/input.js").is_file()),None)
     if base is None:
         raise ValueError("未找到桌宠 helper。")
+    base = base.resolve()
     host = base.parents[1]/"lib/index.js"
     main = base/"main.js"
     anchor = b"async function handleDesktopRoutes(deps, input) {"

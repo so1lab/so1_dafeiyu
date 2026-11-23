@@ -44,7 +44,7 @@
 
 使用 dsh 宿主当前的默认模型。请先在 dsh 中配置可用的 DeepSeek 提供商，并将其选为默认模型。本组件无需再次填写 API Key。未选中 DeepSeek、请求失败或返回格式不合法时，会使用本地规则分类。
 
-本地验证环境为 Windows、dsh-pet 0.4.7、Python 3.12。代码要求 Python 3.10+。其他上游版本需要核对接入点兼容性。
+本地验证环境为 Windows、dsh-pet 0.4.7 / 0.4.9、Python 3.12。代码要求 Python 3.10+。其他上游版本需要核对接入点兼容性。
 
 上游安装与项目信息见 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)。
 
