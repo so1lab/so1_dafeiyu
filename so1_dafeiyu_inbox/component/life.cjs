@@ -21,7 +21,7 @@ module.exports = function startLife({pets, data, config, save}) {
     } catch(e) { log(e); }
   }
   if(process.platform==='win32') {
-    sensor=spawn('powershell.exe',['-NoProfile','-NonInteractive','-File',path.join(__dirname,'life-environment.ps1')],
+    sensor=spawn('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.join(__dirname,'life-environment.ps1')],
       {windowsHide:true,stdio:['ignore','pipe','ignore']});
     sensor.on('error',log);
     readline.createInterface({input:sensor.stdout}).on('line',line=>{
