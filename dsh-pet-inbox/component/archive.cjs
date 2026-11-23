@@ -2,6 +2,7 @@ const {screen,shell}=require('electron');
 const {execFile}=require('node:child_process');
 const path=require('node:path');
 const actions=require('./actions.json');
+const cast=require('./magic.cjs');
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
 function query(folder,pet,options=[]){
@@ -169,8 +170,10 @@ module.exports=async function archive(pet,groups,onArrive,allFiled=true,journey=
       let p;
       if(index===0 && journey.first)p=await journey.first;
       else{
-        const locator=module.exports.prepareLocator(pet,lastFolder || group.folder);
-        p=await locator.locate(group.folder,opened,[...opened][0] || 0);
+        const locator=index===0 && journey.locator || module.exports.prepareLocator(pet,lastFolder || group.folder);
+        try{
+          p=await cast(pet,actions.magic,()=>locator.locate(group.folder,opened,[...opened][0] || 0));
+        }finally{locator.cancel();}
       }
       lastFolder=group.folder;
       if(!p)throw Error('未找到可见的文件夹图标');
@@ -187,7 +190,7 @@ module.exports=async function archive(pet,groups,onArrive,allFiled=true,journey=
       await wait(actions.pauseAfterDeliveryMs);
       if(receipt?.taken)opened.clear();
     }catch(e){
-      if(/移动被打断|桌宠正在拖动/.test(e.message))return;
+      if(/移动被打断|桌宠正在拖动|施法被打断/.test(e.message))return;
       allDelivered=false;
       if(!pet.isDestroyed())pet.webContents.send('inbox:parcel',{message:'已归档到 '+path.basename(group.folder)+' · 未完成送达动画'});
       console.warn('[inbox] 文件已归档，送达演出中断',e.message);
@@ -198,7 +201,9 @@ module.exports=async function archive(pet,groups,onArrive,allFiled=true,journey=
       }
     }
   }
-  if(lastFolder)await module.exports.closeOpened(lastFolder,opened);
+  if(lastFolder && opened.size){
+    await cast(pet,actions.magic,()=>module.exports.closeOpened(lastFolder,opened));
+  }
   if(!pet.isDestroyed() && pet.isVisible()){
     const here=await geometry(pet);
     const dx=origin.x-here.x,dy=origin.y-here.y;

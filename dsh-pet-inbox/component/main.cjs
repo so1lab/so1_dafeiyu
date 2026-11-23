@@ -131,20 +131,16 @@ module.exports = function startInbox(pets,host) {
         if(pet.isDestroyed())return;
         const opened=new Set();
         const locator=archive.prepareLocator(pet,target);
-        const prepared=destination.then(batch=>{
-          if(batch.groups.length && !pet.isDestroyed() && pet.isVisible())
-            return locator.locate(batch.groups[0].folder,opened);
-          locator.cancel();return null;
-        }).catch(()=>null);
+        // 仅预热定位进程；必须等施法释放帧后才能提交目标并打开窗口。
         try{
           await bite;
           if(pet.isDestroyed() || !pet.isVisible())return;
           walking.add(pet);
           const batch=await destination;
           if(batch.groups.length && !pet.isDestroyed())
-            await archive(pet,batch.groups,arrived,batch.complete,{first:prepared,opened});
+            await archive(pet,batch.groups,arrived,batch.complete,{locator,opened});
         }finally{
-          walking.delete(pet);locator.cancel();await prepared;
+          walking.delete(pet);locator.cancel();
           const batch=await destination;
           if(opened.size && batch.groups.length)await archive.closeOpened(batch.groups[0].folder,opened);
         }

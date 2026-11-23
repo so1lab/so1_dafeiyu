@@ -64,7 +64,7 @@ def install_helper(opts):
                     atomic_write(dest/item.name,item.read_bytes())
             atomic_write(dest/"runtime.json",json.dumps({"python":sys.executable}).encode())
             atomic_write(preload,updated.encode())
-            print("0.14.0 已更新，请重启桌宠。")
+            print("0.15.0 已更新，请重启桌宠。")
             return
         if dest.exists() or START in changes[preload] or changes[controls].count(INPUT)!=1 or code.count(HOOK)!=1:
             raise ValueError("上游版本或组件目录不匹配。")
