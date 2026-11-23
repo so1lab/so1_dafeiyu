@@ -5,18 +5,22 @@ const readline = require('node:readline');
 const core = require('./life-core.cjs'), pulse = require('./life-renderer.cjs');
 const walk = require('./actions.json').walk;
 
-module.exports = function startLife({pets, data, config, save}) {
+module.exports = function startLife({pets, data, config, save, host}) {
   const file=path.join(data,'life-state.json');
   let saved={};
   let availableClips=[];
   try { availableClips=fs.readdirSync(path.resolve(__dirname,'../../../assets/webm')).filter(n=>n.endsWith('.webm')).map(n=>n.slice(0,-5)); } catch {}
   try { const parsed=JSON.parse(fs.readFileSync(file,'utf8')); if(parsed.version===1) saved=parsed.pets || {}; } catch {}
   const holds=new Map(), running=new Set(), latest=new Map();
+  const planner=require('./life-planner.cjs')({host});
   let suspended=false, disposed=false, foreground=null, sensor=null, lastSave=0, timer;
   const log=e=>console.warn('[fish-life]',e.message);
   function persist() {
     try {
-      fs.writeFileSync(file+'.tmp',JSON.stringify({version:1,pets:saved},null,2));
+      // 诊断快照仅供查看；重启只恢复 pets，不恢复计划、请求或占用令牌。
+      const planning=Object.fromEntries([...latest.entries()].filter(([p])=>!p.isDestroyed()).map(([p,s])=>
+        [s.id,{...planner.status(p),source:s.source,goal:s.planning?.goal || '',remaining:s.planning?.remaining || 0}]));
+      fs.writeFileSync(file+'.tmp',JSON.stringify({version:1,pets:saved,planning},null,2));
       fs.renameSync(file+'.tmp',file); lastSave=Date.now();
     } catch(e) { log(e); }
   }
@@ -45,13 +49,20 @@ module.exports = function startLife({pets, data, config, save}) {
       const fullscreen=!!fg && foreground.pid!==process.pid && covers(fg,display.bounds);
       const env={now:Date.now(),hour:new Date().getHours(),idle:powerMonitor.getSystemIdleTime(),
         busy:(holds.get(pet)?.size || 0)>0, suspended, fullscreen, quietMode:!!config.lifeQuiet,
-        enabled:config.lifeEnabled!==false, visible:pet.isVisible(), area:work,
+        enabled:config.lifeEnabled!==false, aiEnabled:config.lifeAI!==false,visible:pet.isVisible(), area:work,
         foregroundOverlap:!fresh || (!!fg && foreground.pid!==process.pid &&
           center.x>fg.x && center.x<fg.x+fg.width && center.y>fg.y && center.y<fg.y+fg.height),
         defaultAssets:true, availableClips};
       const result=await pet.webContents.executeJavaScript(
         '('+pulse.toString()+')('+core.toString()+','+JSON.stringify(env)+','+JSON.stringify(saved)+','+JSON.stringify(walk)+')');
-      if(result) { latest.set(pet,result); saved[result.id]=result.state; }
+      if(result && !disposed) {
+        latest.set(pet,result); saved[result.id]=result.state;
+        planner.consider(pet,result,env,async plan=>{
+          if(disposed || pet.isDestroyed() || !pet.isVisible() || suspended || config.lifeEnabled===false ||
+            config.lifeAI===false || config.lifeQuiet || holds.get(pet)?.size)return false;
+          return pet.webContents.executeJavaScript("typeof sprites!=='undefined' && !!sprites[0]?.fishLife?.acceptPlan("+JSON.stringify(plan)+")");
+        });
+      }
       if(Date.now()-lastSave>30000) persist();
     } catch(e) { if(!pet.isDestroyed()) log(e); }
     finally { running.delete(pet); }
@@ -61,6 +72,7 @@ module.exports = function startLife({pets, data, config, save}) {
     const targets=pet?[pet]:[...pets.values()], token=Symbol('task');
     for(const p of targets) {
       if(p.isDestroyed())continue;
+      planner.invalidate(p);
       if(!holds.has(p)) holds.set(p,new Set());
       holds.get(p).add(token);
       // 必须与接件指令在同一 webContents 顺序提交，不能等下一次两秒采样。
@@ -74,8 +86,15 @@ module.exports = function startLife({pets, data, config, save}) {
     };
   }
   function settings(patch) {
+    if(typeof patch?.ai==='boolean')config.lifeAI=patch.ai;
     if(typeof patch?.enabled==='boolean')config.lifeEnabled=patch.enabled;
     if(typeof patch?.quiet==='boolean')config.lifeQuiet=patch.quiet;
+    for(const p of pets.values()) {
+      planner.invalidate(p);
+      if(patch?.replan===true)planner.request(p);
+      if(!p.isDestroyed() && (patch?.replan===true || patch?.ai===false || patch?.enabled===false || patch?.quiet===true))
+        p.webContents.executeJavaScript("if(typeof sprites!=='undefined') sprites[0]?.fishLife?.brain.cancelPlan(); undefined;").catch(()=>{});
+    }
     save(); refresh(); return status();
   }
   function complete(pet) {
@@ -84,20 +103,21 @@ module.exports = function startLife({pets, data, config, save}) {
     ).catch(()=>{});
   }
   function status() {
-    return {enabled:config.lifeEnabled!==false,quiet:!!config.lifeQuiet,
-      pets:[...latest.entries()].filter(([p])=>!p.isDestroyed()).map(([,s])=>({
-        id:s.id, activity:s.held?'task':s.activity,reason:s.held?'先把你的事情做好':s.reason,
+    return {enabled:config.lifeEnabled!==false,quiet:!!config.lifeQuiet,ai:config.lifeAI!==false,
+      pets:[...latest.entries()].filter(([p])=>!p.isDestroyed()).map(([p,s])=>({
+        id:s.id, activity:holds.get(p)?.size?'task':s.activity,reason:holds.get(p)?.size?'先把你的事情做好':s.reason,
         energy:Math.round(s.state.energy),sleepiness:Math.round(s.state.sleepiness),
-        mood:Math.round(s.state.mood),home:s.home,history:s.state.history.slice(-12)}))};
+        mood:Math.round(s.state.mood),home:s.home,history:s.state.history.slice(-12),
+        source:s.source,planning:s.planning,planner:planner.status(p)}))};
   }
   function dispose() {
-    if(disposed)return; disposed=true; clearInterval(timer); persist(); sensor?.kill();
+    if(disposed)return; disposed=true; clearInterval(timer); persist(); sensor?.kill();planner.dispose();
     powerMonitor.removeListener('suspend',suspend); powerMonitor.removeListener('lock-screen',suspend);
     powerMonitor.removeListener('resume',resume); powerMonitor.removeListener('unlock-screen',resume);
     app.removeListener('before-quit',dispose); holds.clear(); latest.clear();
   }
   timer=setInterval(()=>{
-    for(const p of latest.keys())if(p.isDestroyed()){latest.delete(p);holds.delete(p);}
+    for(const p of latest.keys())if(p.isDestroyed()){latest.delete(p);holds.delete(p);planner.forget(p);}
     refresh();
   },2000);
   timer.unref(); app.once('before-quit',dispose); refresh();

@@ -4,3 +4,4 @@
 .life-options input{accent-color:#527d55;width:16px;height:16px}.life-panel small{display:block;color:#74806e;line-height:1.7}
 .life-panel [data-state]{background:#eff4eb;border-radius:12px;padding:16px;margin:22px 0}.life-panel [data-state] p{margin:0 0 6px}
 .life-panel h3{font-size:14px}.life-panel ol{list-style:none;padding:0;max-height:210px;overflow:auto;font-size:13px;line-height:1.8}.life-panel li{padding:5px 0;border-bottom:1px solid #eef0e9}
+.life-panel [data-planner]{font-size:13px;line-height:1.7;margin:12px 0}.life-panel [data-replan]{margin:8px 0}

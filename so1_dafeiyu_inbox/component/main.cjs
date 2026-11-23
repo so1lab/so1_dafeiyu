@@ -11,7 +11,7 @@ module.exports = function startInbox(pets,host) {
   let config = {};
   try { config = JSON.parse(fs.readFileSync(settings, 'utf8')); } catch {}
   const save = () => fs.writeFileSync(settings, JSON.stringify(config));
-  const life = require('./life.cjs')({pets,data,config,save});
+  const life = require('./life.cjs')({pets,data,config,save,host});
   const docs=app.getPath('documents');
   const oldDefault=path.join(docs,'桌宠收纳箱');
   const custom=config.root && path.resolve(config.root)!==path.resolve(oldDefault);

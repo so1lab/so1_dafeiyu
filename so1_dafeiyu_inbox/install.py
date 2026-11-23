@@ -65,7 +65,7 @@ def install_helper(opts):
                     atomic_write(dest/item.name,item.read_bytes())
             atomic_write(dest/"runtime.json",json.dumps({"python":sys.executable}).encode())
             atomic_write(preload,updated.encode())
-            print("0.16.0 已更新，请重启桌宠。")
+            print("0.17.0 已更新，请重启桌宠。")
             return
         if dest.exists() or START in changes[preload] or changes[controls].count(INPUT)!=1 or code.count(HOOK)!=1:
             raise ValueError("上游版本或组件目录不匹配。")
@@ -121,7 +121,8 @@ def install(opts):
         b = raw.index(end,a)+len(end)
         changed = raw[:a]+raw[b:]
     if not opts.uninstall:
-        snippet = (SOURCE/"analysis-route.txt").read_text("utf-8-sig").encode()
+        snippet = ((SOURCE/"analysis-route.txt").read_text("utf-8-sig") +
+                   (SOURCE/"life-plan-route.txt").read_text("utf-8-sig")).encode()
         changed = changed.replace(anchor,anchor+start+b"\n"+snippet+end)
     if wired in original:
         atomic_write(main,original.replace(wired,plain))

@@ -106,6 +106,11 @@ module.exports = function lifePulse(createLife, env, saved, walk) {
       life.raf=requestAnimationFrame(frame);
     }
     life.stop=stop;
+    life.acceptPlan = plan => {
+      if(!life.enabled || blocked() || life.env.quietMode || life.env.suspended || life.env.fullscreen ||
+        life.env.aiEnabled===false || !life.env.visible)return false;
+      return brain.offerPlan(plan,Date.now(),plan.revision);
+    };
     life.hold=() => {
       const owned=life.owns; stop(); life.held=true; brain.interrupt(Date.now());
       if(owned) show(clips.quiet);

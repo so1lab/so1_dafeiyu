@@ -11,16 +11,26 @@ module.exports = function createLife(saved = {}, random = Math.random) {
   };
   let activity = 'quiet', until = 0, lastSpecial = -Infinity, last = '', reason = '安静陪着你';
   const cooldown = {};
+  let pendingPlan=null, revision=0, source='local', blockedBefore=false;
+  const eligible=env=>['quiet',...(env.available || []).filter(id=>
+    !['quiet','stroll','play','nap'].includes(id) ||
+    (id==='stroll' && env.idle>=90 && env.canStroll) || (id==='play' && env.idle>=120) || (id==='nap' && env.idle>=300))];
+  function cancelPlan(){pendingPlan=null;revision++;}
   function record(kind, text, now) {
     state.history.push({kind, text, at: now}); state.history = state.history.slice(-40);
   }
-  function select(id, why, seconds, now) {
-    activity = id; reason = why; until = now + seconds * 1000;
+  function select(id, why, seconds, now, by='local') {
+    activity = id; reason = why; until = now + seconds * 1000;source=by;
     if (id !== 'quiet') { lastSpecial = now; cooldown[id] = now; last = id; record('activity', why, now); }
   }
   return {
     state,
-    interrupt(now, why = '正在回应你') { select('quiet', why, 25, now); },
+    cancelPlan,
+    offerPlan(plan,now,expectedRevision) {
+      if(expectedRevision!==revision || !plan || plan.expiresAt<=now || !Array.isArray(plan.steps) || !plan.steps.length)return false;
+      pendingPlan={...plan,steps:plan.steps.map(s=>({...s}))};return true;
+    },
+    interrupt(now, why = '正在回应你') { cancelPlan();select('quiet', why, 25, now); },
     complete(now) { state.mood = clamp(state.mood + 3); record('task', '刚刚处理完一项任务', now); },
     rememberHome(home, now) { state.home = home; record('place', '记住了你放我的位置', now); },
     tick(env) {
@@ -35,11 +45,17 @@ module.exports = function createLife(saved = {}, random = Math.random) {
       state.updatedAt = now;
       if (away) select('quiet', '休息过了，慢慢醒来', 35, now);
       const blocked = env.busy || env.interacting || env.external;
+      const protectedNow=blocked || away || env.fullscreen || env.quietMode || env.suspended;
+      if((protectedNow && !blockedBefore) || (env.aiEnabled===false && pendingPlan))cancelPlan();
+      blockedBefore=!!protectedNow;
+      if(pendingPlan && pendingPlan.expiresAt<=now)cancelPlan();
+      if(pendingPlan && !pendingPlan.steps.length && now>=until)pendingPlan=null;
       if (blocked) {
         select('quiet', env.busy ? '先把你的事情做好' : '正在回应你', 25, now);
       } else if (env.suspended || env.fullscreen || env.quietMode) {
         select('quiet', env.suspended ? '暂时休息' : '安静陪着你', 20, now);
       } else if (activity === 'nap' && env.idle < 20) {
+        cancelPlan();
         select('quiet', '你回来啦，慢慢醒来', 45, now);
       } else if (!until) {
         select('quiet', reason, 35 + random() * 25, now);
@@ -54,14 +70,25 @@ module.exports = function createLife(saved = {}, random = Math.random) {
           ['nap', '这里很安静，打个盹', 180, env.idle >= 300 ? 60 + state.sleepiness + (night?30:0) : 0, 600],
         ].filter(([id,,,weight,cd]) => weight > 0 && env.available?.includes(id) &&
           id !== last && now - (cooldown[id] ?? -Infinity) >= cd*1000);
-        if (now-lastSpecial < 90000 || !candidates.length) select('quiet', '安静陪着你', 25, now);
+        let proposed=pendingPlan?.steps[0];
+        // 同一份实时约束同时检查模型计划和本地选择，计划不能越过冷却或用户状态。
+        if(proposed && (!eligible(env).includes(proposed.activity) ||
+          (proposed.activity!=='quiet' && (now-lastSpecial<90000 || !candidates.some(c=>c[0]===proposed.activity))))) {
+          cancelPlan();proposed=null;
+        }
+        if(proposed) {
+          pendingPlan.steps.shift();select(proposed.activity,proposed.reason,proposed.durationSec,now,'deepseek');
+        } else if (now-lastSpecial < 90000 || !candidates.length) select('quiet', '安静陪着你', 25, now);
         else {
           let roll = random()*candidates.reduce((sum,c) => sum+c[3],0);
           const chosen = candidates.find(c => (roll -= c[3]) < 0) || candidates[candidates.length-1];
           select(chosen[0], chosen[1], chosen[2], now);
         }
       }
-      return {activity, reason, until, state};
+      if(pendingPlan && !pendingPlan.steps.length && now>=until)pendingPlan=null;
+      return {activity, reason, until, state,source,planning:{revision,eligible:eligible(env),
+        ready:!protectedNow,remaining:pendingPlan?pendingPlan.steps.length+(source==='deepseek'?1:0):0,
+        goal:pendingPlan?.goal || '',model:pendingPlan?.model || ''}};
     },
   };
 };
