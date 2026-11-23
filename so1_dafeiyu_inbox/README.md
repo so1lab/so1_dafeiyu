@@ -24,7 +24,7 @@
 
 1. 在 dsh 中安装 dsh-pet，确认桌宠可以正常显示。
 2. 安装 Python 3.10 或更新版本，确认终端中的 python --version 可用。
-3. 下载仓库完整 ZIP 并解压，进入 dsh-pet-inbox 目录。保留 component、assets 和 install.py 的相对位置。
+3. 下载仓库完整 ZIP 并解压，进入 so1_dafeiyu_inbox 目录。保留 component、assets 和 install.py 的相对位置。
 4. 关闭桌宠，在 PowerShell 运行安装器。
 
 通过 dsh 默认配置安装时，常见插件路径如下。先确认 Test-Path 返回 True。

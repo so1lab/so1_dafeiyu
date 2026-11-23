@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parent / "component"
+# 保留旧版运行目录及注入标记，让已有安装继续原位升级和卸载。
 HOOK = "  linuxPointer?.start();\n  petWindows.create();"
 OLD = HOOK + "\n  // dsh-pet-inbox v1\n  require('./dsh-pet-inbox/main.cjs')();"
 NEW = HOOK + "\n  // dsh-pet-inbox v2\n  require('./dsh-pet-inbox-v2/main.cjs')(petWindows.state.windows);"
