@@ -1,10 +1,11 @@
 const {BrowserWindow,ipcMain,shell,dialog}=require('electron');
 const path=require('node:path');
 
-module.exports=function library({pets,worker,root,queue}) {
+module.exports=function library({pets,worker,root,queue,life}) {
   let panel;
   const fromPet=e=>e.senderFrame===e.sender.mainFrame && Array.from(pets.values()).some(p=>!p.isDestroyed() && p.webContents===e.sender);
   const fromPanel=e=>panel && !panel.isDestroyed() && panel.webContents===e.sender && e.senderFrame===e.sender.mainFrame;
+  ipcMain.handle('inbox:life',(e,patch)=>{if(fromPanel(e))return patch ? life.settings(patch) : life.status();});
   const entries=async()=>(await worker({action:'catalog'},root())).entries;
   function show(){
     if(panel && !panel.isDestroyed()){if(panel.webContents.getURL().endsWith('/replay.html'))panel.loadFile(path.join(__dirname,'library.html'));panel.show();panel.focus();return;}

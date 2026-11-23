@@ -11,6 +11,7 @@ module.exports = function startInbox(pets,host) {
   let config = {};
   try { config = JSON.parse(fs.readFileSync(settings, 'utf8')); } catch {}
   const save = () => fs.writeFileSync(settings, JSON.stringify(config));
+  const life = require('./life.cjs')({pets,data,config,save});
   const docs=app.getPath('documents');
   const oldDefault=path.join(docs,'桌宠收纳箱');
   const custom=config.root && path.resolve(config.root)!==path.resolve(oldDefault);
@@ -52,7 +53,7 @@ module.exports = function startInbox(pets,host) {
     });
   }
   const receipts=new WeakMap(), failures=new WeakMap(), walking=new WeakSet();
-  const bites = new WeakMap();
+  const bites = new WeakMap(), mouthHolds = new WeakMap();
   function mouthAnimation(clip, stage) {
     if (typeof sprites === 'undefined' || !sprites[0]) return;
     const s = sprites[0];
@@ -70,7 +71,14 @@ module.exports = function startInbox(pets,host) {
   const senderPet=e=>[...pets.values()].find(p=>!p.isDestroyed() && p.webContents===e.sender && e.senderFrame===e.sender.mainFrame);
   ipcMain.on('inbox:mouth-pose',(e,stage)=>{
     const pet=senderPet(e);
-    if(!pet || config.reduced || walking.has(pet))return;
+    if(!pet || walking.has(pet))return;
+    if(!['ready','bite','leave'].includes(stage))return;
+    mouthHolds.get(pet)?.(); mouthHolds.delete(pet);
+    if(stage!=='leave') {
+      const release=life.acquire(pet), timeout=setTimeout(release,15000);
+      mouthHolds.set(pet,()=>{clearTimeout(timeout);release();});
+    }
+    if(config.reduced)return;
     const clip={ready:'啊呜等投喂',bite:'啊呜吞件',leave:'待机呼吸休闲'}[stage];
     if(typeof clip!=='string')return;
     const playback = pet.webContents.executeJavaScript(
@@ -110,15 +118,18 @@ module.exports = function startInbox(pets,host) {
   });
   function animate(pet,groups,allFiled=true){
     pet=pet || pets.values().next().value;
+    const releaseLife=life.acquire(pet);
     animationTail=animationTail.then(async()=>{
       if(!pet || pet.isDestroyed())return;
       walking.add(pet);
       try{await require('./archive.cjs')(pet,groups,arrived,allFiled);}finally{walking.delete(pet);}
     })
-      .catch(e=>console.warn('[inbox] 动画中断',e.message));
+      .catch(e=>console.warn('[inbox] 动画中断',e.message)).finally(releaseLife);
     return animationTail;
   }
   function queue(req,pet) {
+    const releaseLife=life.acquire(pet);
+    if(pet){mouthHolds.get(pet)?.();mouthHolds.delete(pet);}
     const bite = req.action === 'drop' && bites.get(pet);
     if (bite) bites.delete(pet);
     let delivering = false;
@@ -172,6 +183,7 @@ module.exports = function startInbox(pets,host) {
           say('已处理 '+(++done)+'/'+paths.length+' · 已归档 '+success);
           library.refresh();
         }
+        if(success>0)life.complete(pet);
         if(paths.length>1)result={message:'已归档 '+success+'/'+paths.length+' 项'};
         if(groups.size && !config.reduced){
           const first=[...groups.values()][0];
@@ -199,6 +211,8 @@ module.exports = function startInbox(pets,host) {
     }).catch(e => {say('操作失败 · 请查看提示'); dialog.showErrorBox('桌宠收纳箱',e.message);})
       .finally(async () => {
         pending--;
+        // 文件已处理并不代表送件演出结束；身体占用直到这条演出链收尾才释放。
+        animationTail.finally(releaseLife);
         classified=true;
         finishJourney?.({groups:[],complete:false});
         if (bite && !delivering) {
@@ -214,8 +228,10 @@ module.exports = function startInbox(pets,host) {
     try { fs.mkdirSync(root(),{recursive:true}); const err=await shell.openPath(root()); if(err) throw Error(err); }
     catch(e) { dialog.showErrorBox('打开收纳目录失败',e.message); }
   }
-  const library=require('./library.cjs')({pets,worker,root,queue});
+  const library=require('./library.cjs')({pets,worker,root,queue,life});
   const settingsMenu = win => [
+    {label:'自主生活',type:'checkbox',checked:config.lifeEnabled!==false,click:item=>life.settings({enabled:item.checked})},
+    {label:'安静陪伴',type:'checkbox',checked:!!config.lifeQuiet,click:item=>life.settings({quiet:item.checked})},
     {label:'问大肥鱼找文件',click:library.show},
     {label:'打开收纳目录',click:openRoot},
     {label:'精简搬运动画',type:'checkbox',checked:!!config.reduced,click:item=>{config.reduced=item.checked;save();}},
