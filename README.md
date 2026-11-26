@@ -35,6 +35,18 @@
 | 💬 QQ 技术交流群 | 守一 DIY 爱好者交流群 · 群号 `672632842` |
 
 > 视频教程、DIY 过程和翻车日常都会同步更新，欢迎来玩；技术问题优先在 QQ 群里问，回复最快。
+
+---
+
+### 🎁 顺手推荐
+
+国企运营的智算方舟，把 DeepSeek、GLM 等主流大模型打包成 ¥18 起的 Token 月套餐，价格只有官方 API 的一半到四分之一；现在登录还能免费领 30 万算力点，价格便宜，大肥鱼用着不烧心。
+
+<p align="center">
+  <img src="./fangzhou-qr.jpg" alt="智算方舟推广二维码 · 推广码 XBnapu5a" width="320" />
+</p>
+
+<p align="center"><strong>📱 扫一扫，开通你的专属算力服务</strong> · 推广码 <code>XBnapu5a</code></p>
 <!-- END SO1 INTRO -->
 
 ---
