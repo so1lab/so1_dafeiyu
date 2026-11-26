@@ -3,6 +3,7 @@
   const {ipcRenderer: courier, webUtils} = require('electron');
   window.addEventListener('message',event=>{
     if(event.source===window && event.data?.type==='fish-life-fact')courier.send('inbox:life-fact',event.data.fact);
+    if(event.source===window && event.data?.type==='fish-feed-recommendation')courier.send('inbox:feed-recommendation');
   });
   let parcel;
   let timer;

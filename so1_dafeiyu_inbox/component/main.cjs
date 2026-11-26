@@ -76,6 +76,8 @@ module.exports = function startInbox(pets,host) {
     });
   }
   const senderPet=e=>[...pets.values()].find(p=>!p.isDestroyed() && p.webContents===e.sender && e.senderFrame===e.sender.mainFrame);
+  const showRecommendation=require('./feed.cjs')(pets);
+  ipcMain.on('inbox:feed-recommendation',e=>{if(senderPet(e))showRecommendation();});
   ipcMain.on('inbox:life-fact',(e,fact)=>{const pet=senderPet(e);if(pet)try{life.ingest(pet,fact);}catch(err){console.warn('[fish-life] 经历未能写盘',err.message);}});
   ipcMain.on('inbox:mouth-pose',(e,stage)=>{
     const pet=senderPet(e);
