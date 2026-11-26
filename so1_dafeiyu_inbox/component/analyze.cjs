@@ -1,4 +1,5 @@
 const path=require('node:path');
+const fs=require('node:fs/promises');
 module.exports=async function analyze(req,root,worker,host){
   const plans=Object.create(null);
   for(const file of [...new Set(req.paths)]){
@@ -17,4 +18,34 @@ module.exports=async function analyze(req,root,worker,host){
     }catch{/* 离线或返回格式错误时，仍在同一资料库完成归档。 */}
   }
   return plans;
+};
+
+module.exports.desktopDialogue=function desktopDialogue(worker,host){
+  let busy=false;
+  return async (file,alive)=>{
+    if(busy || !alive())return null;
+    busy=true;
+    const unchanged=async()=>{
+      const stat=await fs.lstat(file.path);
+      return stat.isFile() && !stat.isSymbolicLink() && stat.size===file.size &&
+        stat.mtimeMs===file.modifiedAt &&
+        (!file.identity || file.identity===`${stat.dev}:${stat.ino}:${stat.birthtimeMs}`);
+    };
+    try {
+      if(!await unchanged() || !alive())return null;
+      const {excerpt}=await worker({action:'desktop_excerpt',file:file.path});
+      if(!await unchanged() || !alive())return null;
+      const response=await host('POST','/dsh-pet-7340/desktop-dialogue',JSON.stringify({
+        name:file.name.slice(0,180),excerpt:typeof excerpt==='string'?excerpt.slice(0,900):''
+      }));
+      if(!alive() || !await unchanged())return null;
+      const reply=JSON.parse(response.body);
+      if(!reply.ok || typeof reply.text!=='string')return null;
+      const result=JSON.parse(reply.text.trim().replace(/^\x60\x60\x60(?:json)?\s*|\s*\x60\x60\x60$/gi,''));
+      const line=value=>typeof value==='string' && !/[\r\n<>]/u.test(value) &&
+        value.trim().length<=36 ? value.trim() : '';
+      return {peek:line(result?.peek),reaction:line(result?.reaction)};
+    }catch{return null;}
+    finally{busy=false;}
+  };
 };

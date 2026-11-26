@@ -21,10 +21,11 @@ module.exports = function createLife(saved = {}, random = Math.random) {
   }
   function select(id, why, seconds, now, by='local') {
     activity = id; reason = why; until = now + seconds * 1000;source=by;
-    if (id !== 'quiet') { lastSpecial = now; cooldown[id] = now; last = id; record('activity', why, now); }
+    if (id !== 'quiet') { lastSpecial = now; cooldown[id] = now; last = id; record('intent', '打算：'+why, now); }
   }
   return {
     state,
+    resume(id,now){if(!['observe','stretch','play','rest'].includes(id))return false;cancelPlan();select(id,'你让我继续刚才的小活动',id==='rest'?70:12,now);return true;},
     cancelPlan,
     offerPlan(plan,now,expectedRevision) {
       if(expectedRevision!==revision || !plan || plan.expiresAt<=now || !Array.isArray(plan.steps) || !plan.steps.length)return false;

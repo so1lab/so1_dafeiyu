@@ -36,9 +36,10 @@ module.exports=function createPlanner({host,now=Date.now,timeoutMs=23000}) {
     const generation=++r.generation,revision=snapshot.planning.revision;
     const eligible=snapshot.planning.eligible;
     const context={hour:env.hour,idleSeconds:Math.min(3600,Math.round(env.idle)),
-      activity:snapshot.activity,reason:snapshot.reason,eligible,
+      activity:snapshot.awareness?.current?.activity || snapshot.activity,reason:snapshot.awareness?.current?.reason || snapshot.reason,eligible,
       state:Object.fromEntries(['energy','sleepiness','mood','curiosity'].map(k=>[k,Math.round(snapshot.state[k])])),
-      recent:snapshot.state.history.slice(-8).map(e=>({kind:e.kind,text:e.text,minutesAgo:Math.max(0,Math.round((time-e.at)/60000))}))};
+      self:snapshot.awareness?.current || null,interrupted:snapshot.awareness?.previous || null,
+      recent:(snapshot.awareness?.recent || snapshot.state.history).slice(-8).map(e=>({kind:e.type || e.kind,text:e.text,minutesAgo:Math.max(0,Math.round((time-e.at)/60000))}))};
     inflight=true;lastCall=time;calls.push(time);r.status='planning';r.updatedAt=time;
     // timeout 后也不允许新的请求与尚未返回的宿主请求重叠。
     let expired=false;

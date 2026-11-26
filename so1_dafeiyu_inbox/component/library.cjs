@@ -8,6 +8,7 @@ module.exports=function library({pets,worker,root,queue,life}) {
   ipcMain.handle('inbox:life',(e,patch)=>{if(fromPanel(e))return patch ? life.settings(patch) : life.status();});
   const entries=async()=>(await worker({action:'catalog'},root())).entries;
   function show(){
+    life?.record?.(null,'user.opened_warehouse');
     if(panel && !panel.isDestroyed()){if(panel.webContents.getURL().endsWith('/replay.html'))panel.loadFile(path.join(__dirname,'library.html'));panel.show();panel.focus();return;}
     panel=new BrowserWindow({width:1180,height:760,minWidth:620,minHeight:380,title:'大肥鱼的文件总览',autoHideMenuBar:true,
       webPreferences:{preload:path.join(__dirname,'library-preload.js'),contextIsolation:true,sandbox:true,nodeIntegration:false}});
@@ -27,12 +28,13 @@ module.exports=function library({pets,worker,root,queue,life}) {
       queue({action:'drop',paths},BrowserWindow.fromWebContents(e.sender));
   });
   ipcMain.handle('inbox:entries',e=>{if(fromPanel(e))return worker({action:'catalog'},root());});
-  ipcMain.handle('inbox:desk-move',(e,ids,folder)=>{
+  ipcMain.handle('inbox:desk-move',async(e,ids,folder)=>{
     if(fromPanel(e) && Array.isArray(ids) && ids.every(Number.isSafeInteger) && typeof folder==='string')
-      return worker({action:'desk_move',ids,folder},root());
+      {const result=await worker({action:'desk_move',ids,folder},root());
+      if(result.done>0)life?.record?.(null,'user.corrected',{count:result.done,folders:[path.basename(folder)]});return result;}
   });
   ipcMain.handle('inbox:desk-undo',(e,batch)=>{
-    if(fromPanel(e) && typeof batch==='string')return worker({action:'desk_undo',batch},root());
+    if(fromPanel(e) && typeof batch==='string'){life?.record?.(null,'user.undo');return worker({action:'desk_undo',batch},root());}
   });
   ipcMain.handle('inbox:thumb',async(e,file,large)=>{
     if(!fromPanel(e) || typeof file!=='string' || !/\.(png|jpe?g|webp|gif|bmp)$/i.test(file))return '';

@@ -1,4 +1,4 @@
-﻿param([Parameter(Mandatory=$true)][string]$Folder,[switch]$NoGateway,[switch]$Reveal,[long]$PetHwnd=0,[switch]$Snapshot,[switch]$OpenAndLocate,[switch]$Prepared,[long]$CloseHwnd=0)
+﻿param([Parameter(Mandatory=$true)][string]$Folder,[switch]$NoGateway,[switch]$Reveal,[long]$PetHwnd=0,[switch]$Snapshot,[switch]$OpenAndLocate,[switch]$Prepared,[long]$CloseHwnd=0,[switch]$DesktopOnly,[switch]$DesktopDebug)
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
 Add-Type @"
@@ -15,6 +15,25 @@ public class PetHit {
  [DllImport("user32")] public static extern IntPtr FindWindowEx(IntPtr p,IntPtr prev,string c,string n);
  [DllImport("user32")] public static extern IntPtr WindowFromPoint(System.Drawing.Point p);
  [DllImport("user32")] public static extern IntPtr GetAncestor(IntPtr h,uint mode);
+ public delegate bool EnumProc(IntPtr hwnd, IntPtr data);
+ [DllImport("user32")] public static extern bool EnumWindows(EnumProc fn, IntPtr data);
+ [DllImport("user32")] public static extern bool EnumChildWindows(IntPtr parent, EnumProc fn, IntPtr data);
+ [DllImport("user32",CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr hwnd,System.Text.StringBuilder name,int count);
+ static string ClassOf(IntPtr hwnd){var s=new System.Text.StringBuilder(128);GetClassName(hwnd,s,s.Capacity);return s.ToString();}
+ public static IntPtr DesktopView(){
+   IntPtr result=IntPtr.Zero;
+   EnumWindows((top,data)=>{
+     string c=ClassOf(top);if(c!="Progman" && c!="WorkerW")return true;
+     EnumChildWindows(top,(child,unused)=>{
+       if(ClassOf(child)!="SHELLDLL_DefView")return true;
+       EnumChildWindows(child,(list,none)=>{if(ClassOf(list)=="SysListView32"){result=list;return false;}return true;},IntPtr.Zero);
+       return result==IntPtr.Zero;
+     },IntPtr.Zero);
+     return result==IntPtr.Zero;
+   },IntPtr.Zero);
+   return result;
+ }
+
 }
 "@ -ReferencedAssemblies System.Drawing
 $null=[PetHit]::SetThreadDpiAwarenessContext([intptr](-4))
@@ -38,19 +57,17 @@ if($CloseHwnd){
     exit
 }
 function DesktopList {
-    $hostWin=[PetHit]::FindWindow('Progman',$null)
-    $view=[PetHit]::FindWindowEx($hostWin,[intptr]::Zero,'SHELLDLL_DefView',$null)
-    $prev=[intptr]::Zero
-    while($view -eq [intptr]::Zero){
-        $prev=[PetHit]::FindWindowEx([intptr]::Zero,$prev,'WorkerW',$null)
-        if($prev -eq [intptr]::Zero){return}
-        $view=[PetHit]::FindWindowEx($prev,[intptr]::Zero,'SHELLDLL_DefView',$null)
-    }
-    [PetHit]::FindWindowEx($view,[intptr]::Zero,'SysListView32',$null)
+    # Win11 中 DefView 可能不是 WorkerW/Progman 的直接子窗口。
+    [PetHit]::DesktopView()
 }
 function Locate($scope,$item,$handle,$kind){
     if(!$scope){return}
     $cond=[Windows.Automation.PropertyCondition]::new($ae::NameProperty,[string]$item.Name)
+    # 隐藏扩展名时不同文件可能同显示名；不猜测坐标。
+    if($DesktopOnly){
+        $same=@($shell.Namespace(0).Items() | Where-Object {$_.Name -eq $item.Name})
+        if($same.Count -ne 1){return}
+    }
     foreach($el in $scope.FindAll($desc,$cond)){
         if($el.Current.ControlType -notin @([Windows.Automation.ControlType]::ListItem,[Windows.Automation.ControlType]::DataItem) -or $el.Current.IsOffscreen){continue}
         $r=$el.Current.BoundingRectangle
@@ -58,7 +75,9 @@ function Locate($scope,$item,$handle,$kind){
         # 详细信息视图中整行可能很宽，落点取名称一侧；大图标取上半部。
         $x=[int]($r.Left+[Math]::Min($r.Width/2,33));$y=[int]($r.Top+[Math]::Min($r.Height*.45,29))
         $hit=[PetHit]::WindowFromPoint([Drawing.Point]::new($x,$y))
-        if([PetHit]::GetAncestor($hit,2) -notin @([PetHit]::GetAncestor($handle,2),[intptr]$PetHwnd)){continue}
+        $visible=[PetHit]::GetAncestor($hit,2) -in @([PetHit]::GetAncestor($handle,2),[intptr]$PetHwnd)
+        if($DesktopOnly){return @{x=$x;y=$y;kind=$kind;visible=$visible}}
+        if(!$visible){continue}
         return @{x=$x;y=$y;kind=$kind}
     }
 }
@@ -69,7 +88,7 @@ function VerifyDesktop($allowParent){
     foreach($item in $shell.Namespace(0).Items()){
         try{
             $dest=$item.Path
-            if($item.IsLink){$dest=$item.GetLink.Target.Path}
+            if($item.IsLink -and !$DesktopOnly){$dest=$item.GetLink.Target.Path}
             if(!$dest){continue}
             $dest=$dest.TrimEnd('\')
             if($dest -eq $folderPath -and !$allowParent){$r=Locate $scope $item $hw 'desktop'}
@@ -102,6 +121,46 @@ function FindExplorerItem {
             if($r){$r.hwnd=[long]$hw;return $r}
         }catch{}
     }
+}
+function ShellDesktopPoint {
+    try {
+        Add-Type -Path (Join-Path $PSScriptRoot 'desktop-shell.cs') -ReferencedAssemblies System.Core,Microsoft.CSharp
+        $p=[FishDesktopShell]::Locate($folderPath)
+        if(!$p){return}
+        $hw=[intptr]$p.Hwnd
+        $hit=[PetHit]::WindowFromPoint([Drawing.Point]::new($p.X,$p.Y))
+        $visible=[PetHit]::IsWindowVisible($hw) -and ([PetHit]::GetAncestor($hit,2) -in @([PetHit]::GetAncestor($hw,2),[intptr]$PetHwnd))
+        return @{x=$p.X;y=$p.Y;kind='desktop';visible=$visible;source='shell-view'}
+    }catch{if($DesktopDebug){[Console]::Error.WriteLine($_.Exception.Message)}}
+}
+if($DesktopDebug){
+    $hw=DesktopList
+    $items=@($shell.Namespace(0).Items() | Where-Object {$_.Path -eq $folderPath})
+    $details=@();$partial=@();$total=0
+    if($hw){
+        $scope=$ae::FromHandle($hw)
+        $stem=[IO.Path]::GetFileNameWithoutExtension($folderPath)
+        $all=$scope.FindAll($desc,[Windows.Automation.Condition]::TrueCondition)
+        $total=$all.Count
+        foreach($candidate in $all){
+            if($candidate.Current.Name.StartsWith($stem)){$partial+=@{name=$candidate.Current.Name;type=$candidate.Current.ControlType.ProgrammaticName;offscreen=$candidate.Current.IsOffscreen}}
+        }
+        foreach($item in $items){
+            $cond=[Windows.Automation.PropertyCondition]::new($ae::NameProperty,[string]$item.Name)
+            foreach($el in $scope.FindAll($desc,$cond)){
+                $r=$el.Current.BoundingRectangle
+                $details+=@{name=$el.Current.Name;type=$el.Current.ControlType.ProgrammaticName;offscreen=$el.Current.IsOffscreen;x=$r.X;y=$r.Y;width=$r.Width;height=$r.Height}
+            }
+        }
+    }
+    @{hwnd=[long]$hw;shellMatches=$items.Count;names=@($items|ForEach-Object {$_.Name});elements=$details;partial=$partial;total=$total;visible=[PetHit]::IsWindowVisible($hw);shellPoint=(ShellDesktopPoint)}|ConvertTo-Json -Depth 5 -Compress
+    exit
+}
+if($DesktopOnly){
+    $r=ShellDesktopPoint
+    if(!$r){$r=VerifyDesktop $false}
+    if($r){$r|ConvertTo-Json -Compress}else{'null'}
+    exit
 }
 if($Prepared){
     # Receive the resolved destination as data after UI Automation and COM have loaded.

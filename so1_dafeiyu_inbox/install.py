@@ -67,7 +67,7 @@ def install_helper(opts):
                     atomic_write(dest/item.name,item.read_bytes())
             atomic_write(dest/"runtime.json",json.dumps({"python":sys.executable}).encode())
             atomic_write(preload,updated.encode())
-            print("0.17.0 已更新，请重启桌宠。")
+            print("0.19.6-test 已更新，请重启 dsh。")
             return
         if dest.exists() or START in changes[preload] or changes[controls].count(INPUT)!=1 or code.count(HOOK)!=1:
             raise ValueError("上游版本或组件目录不匹配。")
@@ -119,14 +119,39 @@ def install(opts):
     if raw.count(anchor)!=1 or b"async function generateWith(ctx, llm, sel, request)" not in raw:
         raise ValueError("当前宿主不兼容分析接口。")
     changed = raw
-    if start in raw:
-        a = raw.index(start)
-        b = raw.index(end,a)+len(end)
-        changed = raw[:a]+raw[b:]
+    awareness_start = b"\n/* BEGIN fish experience support */"
+    awareness_end = b"/* END fish experience support */\n"
+    chat_plain = b"system: patch?.system ?? system,"
+    chat_old = b"system: (patch?.system ?? system) + fishAwarenessContext(petId, text),"
+    chat_wired = b"system: (patch?.system ?? system) + fishContext,"
+    call_plain = b"\t\t\tconst generated = await generateChat({"
+    call_wired = (b"\t\t\tconst fishContext = fishAwarenessContext(petId, text);\n"
+                  b"\t\t\tconst generated = fishWantsFact(text) ? {ok:true,text:fishGroundedReply(petId,text,'')} : await generateChat({")
+    answer_plain = b"\t\t\tif (!generated.ok) return generated;"
+    answer_wired = answer_plain + b"\n\t\t\t/* fish grounded reply */ generated.text = fishGroundedReply(petId, text, generated.text);"
+    if awareness_start in changed:
+        a = changed.index(awareness_start)
+        b = changed.index(awareness_end,a)+len(awareness_end)
+        changed = changed[:a]+changed[b:]
+    changed = changed.replace(chat_wired,chat_plain)
+    changed = changed.replace(chat_old,chat_plain).replace(call_wired,call_plain)
+    changed = changed.replace(answer_wired,answer_plain)
+    if start in changed:
+        a = changed.index(start)
+        b = changed.index(end,a)+len(end)
+        changed = changed[:a]+changed[b:]
     if not opts.uninstall:
         snippet = ((SOURCE/"analysis-route.txt").read_text("utf-8-sig") +
-                   (SOURCE/"life-plan-route.txt").read_text("utf-8-sig")).encode()
+                   (SOURCE/"life-plan-route.txt").read_text("utf-8-sig") +
+                   (SOURCE/"awareness-route.txt").read_text("utf-8-sig")).encode()
         changed = changed.replace(anchor,anchor+start+b"\n"+snippet+end)
+        if changed.count(chat_plain)!=1:
+            raise ValueError("当前宿主聊天入口不兼容经历上下文。")
+        changed = changed.replace(chat_plain,chat_wired)
+        if changed.count(call_plain)!=1:
+            raise ValueError("当前宿主对话入口不兼容事实回执。")
+        changed = changed.replace(call_plain,call_wired)
+        changed = changed+awareness_start+b"\n"+(SOURCE/"awareness-support.js").read_bytes()+b"\n"+awareness_end
     if wired in original:
         atomic_write(main,original.replace(wired,plain))
     try:

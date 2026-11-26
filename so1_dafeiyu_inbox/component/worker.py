@@ -315,6 +315,17 @@ def run(req, db, root):
 
 
 if __name__ == "__main__":
+    req = json.load(sys.stdin)
+    if req["action"] == "desktop_excerpt":
+        file = Path(req["file"])
+        excerpt = ""
+        try:
+            if file.is_absolute() and not file.is_symlink() and file.is_file():
+                excerpt = " ".join(sample_text(file).split())[:900]
+        except Exception:
+            pass
+        print(json.dumps({"excerpt": excerpt}), flush=True)
+        sys.exit(0)
     root = Path(sys.argv[1]).resolve()
     root.mkdir(parents=True, exist_ok=True)
     with contextlib.closing(sqlite3.connect(sys.argv[2])) as db:
@@ -325,7 +336,6 @@ if __name__ == "__main__":
         db.execute("create table if not exists adjustments(item integer primary key,src,dst)")
         db.execute("create table if not exists catalog(item integer primary key,category text,summary text,search_text text,added text default (datetime('now','localtime')))")
         db.execute("create table if not exists items(batch,src,dst,status,reason,sig)")
-        req = json.load(sys.stdin)
         if req["action"] not in ("catalog","sample"):
             db.execute("update items set status='需核对',reason='上次中断，请核对原位置与目标位置' where status in ('移动中','撤销中','调整中')")
         db.commit()

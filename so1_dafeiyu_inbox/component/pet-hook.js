@@ -1,6 +1,9 @@
 // Installed inside the upstream sandboxed preload. File paths come only from trusted OS drops.
 {
   const {ipcRenderer: courier, webUtils} = require('electron');
+  window.addEventListener('message',event=>{
+    if(event.source===window && event.data?.type==='fish-life-fact')courier.send('inbox:life-fact',event.data.fact);
+  });
   let parcel;
   let timer;
   function badge(message) {

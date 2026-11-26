@@ -41,6 +41,7 @@ module.exports = function startInbox(pets,host) {
       const python = JSON.parse(fs.readFileSync(path.join(__dirname,'runtime.json'))).python;
       const child = spawn(python,['-X','utf8',path.join(__dirname,'worker.py'),target,path.join(data,'history.sqlite')],
         {windowsHide:true,stdio:['pipe','pipe','pipe']});
+      const timer=req.action==='desktop_excerpt'?setTimeout(()=>child.kill(),3500):null;
       let result, errorText = '';
       child.on('error',reject);
       child.stdin.on('error',reject);
@@ -48,10 +49,16 @@ module.exports = function startInbox(pets,host) {
       readline.createInterface({input:child.stdout}).on('line', line => {
         try {const event=JSON.parse(line); if(event.progress) say(event.progress); else result=event;} catch {}
       });
-      child.on('close',code => code === 0 && result ? resolve(result) : reject(Error(errorText || 'Python 工作进程未完成')));
+      child.on('close',code => {
+        clearTimeout(timer);
+        if(code===0 && result)resolve(result);
+        else reject(Error(errorText || 'Python 工作进程未完成'));
+      });
       child.stdin.end(JSON.stringify(req));
     });
   }
+  const dialogue=require('./analyze.cjs').desktopDialogue(req=>runWorker(req,root()),host);
+  life.attachDesktop(require('./desktop-visit.cjs')({pets,life,config,save,dialogue}));
   const receipts=new WeakMap(), failures=new WeakMap(), walking=new WeakSet();
   const bites = new WeakMap(), mouthHolds = new WeakMap();
   function mouthAnimation(clip, stage) {
@@ -69,6 +76,7 @@ module.exports = function startInbox(pets,host) {
     });
   }
   const senderPet=e=>[...pets.values()].find(p=>!p.isDestroyed() && p.webContents===e.sender && e.senderFrame===e.sender.mainFrame);
+  ipcMain.on('inbox:life-fact',(e,fact)=>{const pet=senderPet(e);if(pet)try{life.ingest(pet,fact);}catch(err){console.warn('[fish-life] 经历未能写盘',err.message);}});
   ipcMain.on('inbox:mouth-pose',(e,stage)=>{
     const pet=senderPet(e);
     if(!pet || walking.has(pet))return;
@@ -116,18 +124,26 @@ module.exports = function startInbox(pets,host) {
       }else library.show();
     }catch(err){say(err.message);}
   });
+  async function performArchive(pet,groups,allFiled,journey={}) {
+    let done=false;
+    try{done=await require('./archive.cjs')(pet,groups,arrived,allFiled,journey);}
+    finally{life.record(pet,done===true?'task.delivery_completed':'task.delivery_interrupted');}
+  }
   function animate(pet,groups,allFiled=true){
     pet=pet || pets.values().next().value;
     const releaseLife=life.acquire(pet);
     animationTail=animationTail.then(async()=>{
       if(!pet || pet.isDestroyed())return;
       walking.add(pet);
-      try{await require('./archive.cjs')(pet,groups,arrived,allFiled);}finally{walking.delete(pet);}
+      try{await performArchive(pet,groups,allFiled);}finally{walking.delete(pet);}
     })
       .catch(e=>console.warn('[inbox] 动画中断',e.message)).finally(releaseLife);
     return animationTail;
   }
   function queue(req,pet) {
+    const batchId=req.action==='drop'?require('node:crypto').randomUUID():null;
+    if(req.action==='drop'){life.record(pet,'user.fed',{count:new Set(req.paths).size,batch:batchId});life.record(pet,'task.queued',{batch:batchId});}
+    if(req.action==='undo')life.record(pet,'user.undo');
     const releaseLife=life.acquire(pet);
     if(pet){mouthHolds.get(pet)?.();mouthHolds.delete(pet);}
     const bite = req.action === 'drop' && bites.get(pet);
@@ -149,7 +165,7 @@ module.exports = function startInbox(pets,host) {
           walking.add(pet);
           const batch=await destination;
           if(batch.groups.length && !pet.isDestroyed())
-            await archive(pet,batch.groups,arrived,batch.complete,{locator,opened});
+            await performArchive(pet,batch.groups,batch.complete,{locator,opened});
         }finally{
           walking.delete(pet);locator.cancel();
           const batch=await destination;
@@ -162,7 +178,7 @@ module.exports = function startInbox(pets,host) {
     tail = tail.then(async () => {
       let result;
       if(req.action==='drop'){
-        const batch=require('node:crypto').randomUUID(), groups=new Map();
+        const batch=batchId,groups=new Map();life.record(pet,'task.started',{batch});
         const paths=[...new Set(req.paths)];
         let done=0,success=0;
         const failed=[];
@@ -172,6 +188,8 @@ module.exports = function startInbox(pets,host) {
           try{if(host)one.plans=await require('./analyze.cjs')(one,target,worker,host);}
           finally{clearTimeout(notice);}
           result=await worker(one,target);
+          if(result.deliveries?.length)life.record(pet,'task.file_filed',{batch,count:result.deliveries.reduce((n,g)=>n+g.count,0),
+            folders:result.deliveries.map(g=>path.basename(g.folder))});
           if(!result.deliveries?.length && fs.existsSync(file))failed.push(file);
           for(const group of result.deliveries || []){
             success+=group.count;
@@ -183,7 +201,8 @@ module.exports = function startInbox(pets,host) {
           say('已处理 '+(++done)+'/'+paths.length+' · 已归档 '+success);
           library.refresh();
         }
-        if(success>0)life.complete(pet);
+        if(success>0)life.complete(pet,{count:success,batch,folders:[...groups.keys()].map(p=>path.basename(p))});
+        if(success<paths.length)life.record(pet,'task.failed',{count:paths.length-success,batch});
         if(paths.length>1)result={message:'已归档 '+success+'/'+paths.length+' 项'};
         if(groups.size && !config.reduced){
           const first=[...groups.values()][0];
@@ -199,7 +218,10 @@ module.exports = function startInbox(pets,host) {
           failures.set(pet,failed);result.message=failed.length+' 份未能收纳，请核对原位置';
           pet.webContents.send('inbox:returned',{label:path.basename(failed[0]),message:result.message});
         }
-      }else result=await worker(req,target);
+      }else {
+        result=await worker(req,target);
+        if(req.action==='adjust' && result?.message==='分类已调整')life.record(pet,'user.corrected',{count:1,folders:[path.basename(req.folder)]});
+      }
       if (result.rows) {
         const content = result.rows.map(([src,dst,status,reason]) => [status,src,dst,reason].filter(Boolean).join('\n')).join('\n\n');
         const file = path.join(data,'最近收纳记录.txt');
@@ -212,14 +234,19 @@ module.exports = function startInbox(pets,host) {
       .finally(async () => {
         pending--;
         // 文件已处理并不代表送件演出结束；身体占用直到这条演出链收尾才释放。
-        animationTail.finally(releaseLife);
+        const journey=animationTail;
         classified=true;
         finishJourney?.({groups:[],complete:false});
-        if (bite && !delivering) {
-          await bite;
-          if (!pet.isDestroyed()) await pet.webContents.executeJavaScript(
-            "if(sprites[0]?.anim==='啊呜吞件') sprites[0].playOnce('待机呼吸休闲')"
-          ).catch(()=>{});
+        try {
+          if (bite && !delivering) {
+            await bite;
+            if (!pet.isDestroyed()) await pet.webContents.executeJavaScript(
+              "if(sprites[0]?.anim==='啊呜吞件') sprites[0].playOnce('待机呼吸休闲')"
+            ).catch(()=>{});
+          }
+        } finally {
+          // 失败回到待机的收尾也完成后，才能允许自动动作；不阻塞下一批文件分类。
+          void Promise.allSettled([journey]).then(releaseLife);
         }
       });
     return tail;

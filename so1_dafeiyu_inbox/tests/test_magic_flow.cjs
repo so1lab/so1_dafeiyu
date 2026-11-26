@@ -20,7 +20,7 @@ async function run(mode){
       }
       if(code.startsWith('(async function travel')){const args=JSON.parse('['+code.slice(code.lastIndexOf(')(')+2,-1)+']');state.x+=args[0];state.y+=args[1];events.push('move');return;}
       if(code.startsWith('(function throwCue'))events.push('throw');
-      if(code.startsWith('(function celebrate'))events.push('celebrate');
+      if(code.startsWith('(function celebrate')){events.push('celebrate');return true;}
     }}};
   await archive(pet,[{folder:'C:/warehouse/pictures',name:'test',count:1}],()=>{},true,{opened});
   if(mode==='cancel'){assert(!events.includes('open'));assert(!events.includes('move'));return;}

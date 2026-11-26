@@ -8,6 +8,7 @@ public class FishForeground {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out Rect r);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr value);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder name, int count);
 }
 '@
 [void][FishForeground]::SetThreadDpiAwarenessContext([IntPtr](-4))
@@ -17,7 +18,10 @@ while ($true) {
   $ownerId = [uint32]0
   if ([FishForeground]::GetWindowRect($handle, [ref]$rect)) {
     [void][FishForeground]::GetWindowThreadProcessId($handle, [ref]$ownerId)
-    @{x=$rect.Left; y=$rect.Top; width=$rect.Right-$rect.Left; height=$rect.Bottom-$rect.Top; pid=$ownerId} | ConvertTo-Json -Compress
+    $className=New-Object Text.StringBuilder 128
+    [void][FishForeground]::GetClassName($handle,$className,$className.Capacity)
+    $desktop=$className.ToString() -in @('Progman','WorkerW','SHELLDLL_DefView','SysListView32')
+    @{x=$rect.Left; y=$rect.Top; width=$rect.Right-$rect.Left; height=$rect.Bottom-$rect.Top; pid=$ownerId; desktop=$desktop} | ConvertTo-Json -Compress
   }
   Start-Sleep -Seconds 5
 }

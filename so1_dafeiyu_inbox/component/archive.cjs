@@ -16,7 +16,7 @@ function query(folder,pet,options=[]){
 }
 async function locate(folder,pet,options=[]){
   const r=await query(folder,pet,options);
-  return r?{...screen.screenToDipPoint({x:r.x,y:r.y}),kind:r.kind,hwnd:r.hwnd}:null;
+  return r?{...screen.screenToDipPoint({x:r.x,y:r.y}),kind:r.kind,hwnd:r.hwnd,visible:r.visible}:null;
 }
 async function reveal(folder,pet,opened){
   const r=await query(folder,pet,['-OpenAndLocate']);
@@ -49,8 +49,34 @@ function celebrate(clip, timeoutMs){
   const video=s.front===0?s.videoB:s.videoA;
   s.playOnce(clip);
   return new Promise(resolve=>{
-    const timer=setTimeout(resolve,timeoutMs);
-    video.onended=()=>{clearTimeout(timer);resolve();};
+    const timer=setTimeout(()=>resolve(false),timeoutMs);
+    video.onended=()=>{clearTimeout(timer);resolve(s.anim===clip && video.ended);};
+  });
+}
+function noticeFile(clip,timeoutMs,id,speech=null){
+  const s=sprites[0];s.stopMove();s.stopThrow();s.playOnce(clip);
+  const video=s.front===0?s.videoB:s.videoA;
+  return new Promise(resolve=>{
+    let frame=null,done=false,spoken=false;
+    const finish=value=>{if(done)return;done=true;clearTimeout(timer);if(frame!==null)cancelAnimationFrame(frame);resolve(value);};
+    const timer=setTimeout(()=>finish(false),timeoutMs);
+    const guard=()=>{
+      if(s.fishDesktopVisitToken!==id || s.dragState.active || s.frozen || s.sleeping || s.menuOpen || s.chatOpen || s.pet.fixedEnabled){
+        video.pause();finish(false);return;
+      }
+      // 只在对应姿势的播放窗口内消费本次任务的台词，迟到的回复不会挡住下一段。
+      const line=speech && s.fishDesktopDialogue?.id===id && s.fishDesktopDialogue.lines[speech.key];
+      const elapsed=video.currentTime*1000;
+      if(line && !spoken && !s.pending && s.anim===clip && video===(s.front===0?s.videoA:s.videoB) &&
+        !video.paused && !video.ended && elapsed>=speech.from && elapsed<=speech.until){
+        spoken=true;
+        s.showWhisper(line,undefined,undefined,4800,false);
+      }
+      frame=requestAnimationFrame(guard);
+    };
+    frame=requestAnimationFrame(guard);
+    video.onended=()=>finish(s.anim===clip && video.ended);
+    video.onerror=()=>finish(false);
   });
 }
 // Use the clip's playback clock: loading the video must not launch the file early.
@@ -82,8 +108,12 @@ function throwCue(clip,releaseMs){
   });
 }
 // Advance from the visible video clock. A stalled frame cannot slide across the desktop.
-async function travel(dx,dy,direction,walk,stride){
+async function travel(dx,dy,direction,walk,stride,desktop=null){
   const s=sprites[0],distance=Math.hypot(dx,dy);
+  const desktopBlocked=()=>desktop && (s.fishDesktopVisitToken!==desktop.token ||
+    s.frozen || s.sleeping || s.menuOpen || s.chatOpen || s.todoOpen || s.pet?.fixedEnabled ||
+    s.fishLife?.env.suspended || s.fishLife?.env.fullscreen);
+  if(desktopBlocked())throw Error('桌面观察被用户操作或环境变化中断');
   if(distance<1)return;
   if(s.dragState.active)throw Error('桌宠正在拖动');
   s.stopMove();s.stopThrow();s.facing=direction;
@@ -95,29 +125,42 @@ async function travel(dx,dy,direction,walk,stride){
     const i=Math.floor(pos);
     return walk.phase[i]+(pos-i)*((walk.phase[i+1]??1)-walk.phase[i]);
   };
-  while(progress<distance){
-    await new Promise(requestAnimationFrame);
-    if(s.moveToken!==token || s.dragState.active || s.anim!==walk.clip){
-      if(s.anim===walk.clip)(s.front===0?s.videoA:s.videoB).pause();
-      throw Error('移动被打断');
-    }
-    if(performance.now()-lastTick>3500)throw Error('步行动画停滞');
-    const video=s.front===0?s.videoA:s.videoB;
-    if(s.pending || !video.src.endsWith(encodeURIComponent(walk.clip)+'.webm') || video.readyState<2)continue;
-    if(video.paused)await video.play();
-    const current=phaseAt(video.currentTime);
-    if(last!==null){
-      const delta=current>=last?current-last:1-last+current;
-      if(delta>0){
-        lastTick=performance.now();
-        progress=Math.min(distance,progress+stride*delta);
-        s.sendBounds(from.x+dx*progress/distance,from.y+dy*progress/distance);
+  try {
+    while(progress<distance){
+      await new Promise(requestAnimationFrame);
+      if(desktopBlocked())throw Error('桌面观察被用户操作或环境变化中断');
+      if(s.moveToken!==token || s.dragState.active || s.anim!==walk.clip){
+        if(s.moveToken===token && s.anim===walk.clip)(s.front===0?s.videoA:s.videoB).pause();
+        throw Error('移动被打断');
+      }
+      if(performance.now()-lastTick>3500)throw Error('步行动画停滞');
+      const video=s.front===0?s.videoA:s.videoB;
+      if(s.pending || !video.src.endsWith(encodeURIComponent(walk.clip)+'.webm') || video.readyState<2)continue;
+      if(video.paused)await video.play();
+      const current=phaseAt(video.currentTime);
+      if(last!==null){
+        const delta=current>=last?current-last:1-last+current;
+        if(delta>0){
+          lastTick=performance.now();
+          progress=Math.min(distance,progress+stride*delta);
+          s.sendBounds(from.x+dx*progress/distance,from.y+dy*progress/distance);
+        }
+      }
+      last=current;
+      if(progress>=distance){
+        video.pause();
+        s.customPos={rx:(s.pos.x+s.halfW)/VIEW.w,ry:(s.pos.y+s.halfH)/VIEW.h};
+        s.fishLife?.finish('completed','步行已到达目标');
       }
     }
-    last=current;
-    if(progress>=distance){
-      video.pause();
-      s.customPos={rx:(s.pos.x+s.halfW)/VIEW.w,ry:(s.pos.y+s.halfH)/VIEW.h};
+  }finally{
+    // 若视频尚在后台加载，也要用待机换源覆盖，避免取消后迟到的小跑画面。
+    if(desktop && progress<distance && s.anim===walk.clip &&
+      (!s.fishDesktopVisitToken || s.fishDesktopVisitToken===desktop.token)){
+      const suffix=encodeURIComponent(walk.clip)+'.webm';
+      for(const video of [s.videoA,s.videoB])if(video?.src.endsWith(suffix))video.pause();
+      if(s.moveToken===token)s.stopMove();
+      s.switchTo(desktop.idle,false);
     }
   }
 }
@@ -128,8 +171,8 @@ function attach(label){
   Object.assign(card.style,{position:'fixed',zIndex:'10000',pointerEvents:'none',background:'#f7f1eb'});
   document.body.append(card);
 }
-function strideFor(g){
-  return Math.min(g.w*actions.walk.strideRatio,actions.walk.pixelsPerSecond*(actions.walk.phase.length-1)/24);
+function strideFor(g,walk=actions.walk){
+  return Math.min(g.w*walk.strideRatio,walk.pixelsPerSecond*(walk.phase.length-1)/24);
 }
 async function release(x,y,duration){
   const card=document.getElementById('inbox-parcel-card');
@@ -140,18 +183,18 @@ async function release(x,y,duration){
     {transform:'translate('+dx+'px,'+dy+'px) scale(.12)',opacity:0}],{duration,fill:'forwards',easing:'ease-in'}).finished;
   card.remove();
 }
-async function approach(pet,point,confirm){
+async function approach(pet,point,confirm,walk=actions.walk,desktop=null){
   const g=await geometry(pet),area=screen.getDisplayNearestPoint(point).workArea;
   const gap=g.w/2+25;
   let side=g.x<point.x?-1:1;
   if(point.x+side*(gap+g.w/2)<area.x || point.x+side*(gap+g.w/2)>area.x+area.width)side=-side;
   const dx=point.x+side*gap-g.x,dy=point.y-g.w*.09-g.y;
-  const stride=strideFor(g);
-  const duration=Math.hypot(dx,dy)/stride*(actions.walk.phase.length-1)/24*1000;
+  const stride=strideFor(g,walk);
+  const duration=Math.hypot(dx,dy)/stride*(walk.phase.length-1)/24*1000;
   let timer,check;
   if(confirm)timer=setTimeout(()=>{check=confirm();},Math.max(0,duration-550));
   try{
-    await evaluate(pet,travel,dx/g.z,dy/g.z,side<0?'right':'left',actions.walk,stride/g.z);
+    await evaluate(pet,travel,dx/g.z,dy/g.z,side<0?'right':'left',walk,stride/g.z,desktop);
     return confirm ? await (check || confirm()) : null;
   }finally{clearTimeout(timer);}
 }
@@ -159,6 +202,7 @@ module.exports=async function archive(pet,groups,onArrive,allFiled=true,journey=
   if(!pet || pet.isDestroyed() || !pet.isVisible())return;
   const origin=journey.origin || await geometry(pet);
   let allDelivered=allFiled;
+  let journeyCompleted=false;
   const opened=journey.opened || new Set();
   let lastFolder=groups[0]?.folder;
   try{
@@ -212,10 +256,11 @@ module.exports=async function archive(pet,groups,onArrive,allFiled=true,journey=
     }
     const landed=await geometry(pet);
     if(allDelivered && groups.length && Math.hypot(landed.x-origin.x,landed.y-origin.y)<=4){
-      await evaluate(pet,celebrate,actions.celebrate.clip,actions.celebrate.timeoutMs);
+      journeyCompleted=await evaluate(pet,celebrate,actions.celebrate.clip,actions.celebrate.timeoutMs)===true;
     }
     if(!pet.isDestroyed())await evaluate(pet,perform,actions.idle.clip,null);
   }
+  return journeyCompleted;
   }finally{if(lastFolder)await module.exports.closeOpened(lastFolder,opened);}
 };
 
@@ -223,6 +268,92 @@ module.exports=async function archive(pet,groups,onArrive,allFiled=true,journey=
 
 // The warehouse is a shared waypoint even before the classifier knows the subfolder.
 module.exports.locate=locate;
+// 发现动作不依赖桌面图标是否可见。这样即使文件暂时被窗口遮住，
+// 大肥鱼也会先对“新文件出现”作出反应，靠近和偷看则等待图标可见。
+module.exports.reactToFile=async function(pet,{token,alive=()=>true}) {
+  const valid=()=>alive() && !pet.isDestroyed() && pet.isVisible();
+  if(!valid())throw Error('发现文件动作已取消');
+  const accepted=await evaluate(pet,function(id){
+    const s=sprites[0];
+    if(!s || s.dragState.active || s.frozen || s.sleeping || s.menuOpen || s.chatOpen || s.pet.fixedEnabled ||
+      s.throwRef!=null || s.moveRef!=null || s.posFollow!=null || (s.fishLife?.externalUntil || 0)>Date.now())return false;
+    s.fishDesktopVisitToken=id;return true;
+  },token);
+  if(!accepted)throw Error('桌宠正在处理其它操作');
+  try {
+    if(!valid())throw Error('发现文件动作已取消');
+    const noticed=await evaluate(pet,noticeFile,actions.desktopDiscover.clip,actions.desktopDiscover.timeoutMs,token);
+    if(!noticed || !valid())throw Error('发现文件动作未完整播放');
+  } finally {
+    if(!pet.isDestroyed())await evaluate(pet,function(id){
+      const s=sprites[0];if(s.fishDesktopVisitToken===id)s.fishDesktopVisitToken=null;
+    },token).catch(()=>{});
+  }
+};
+// 新文件观察只查询桌面，不打开资源管理器、不施法、不投放或移动文件。
+module.exports.visitFile=async function(pet,file,{point,token,alive=()=>true,prepareDialogue}) {
+  const valid=()=>alive() && !pet.isDestroyed() && pet.isVisible();
+  const cancel=()=>evaluate(pet,function(id){
+    const s=sprites[0];if(s.fishDesktopVisitToken!==id)return;
+    s.fishDesktopVisitToken=null;s.stopMove();
+  },token).catch(()=>{});
+  if(!valid())throw Error('靠近已取消');
+  const accepted=await evaluate(pet,function(id){
+    const s=sprites[0];
+    if(!s || s.dragState.active || s.frozen || s.sleeping || s.menuOpen || s.chatOpen || s.pet.fixedEnabled ||
+      s.throwRef!=null || s.moveRef!=null || s.posFollow!=null || (s.fishLife?.externalUntil || 0)>Date.now())return false;
+    s.fishDesktopVisitToken=id;return true;
+  },token);
+  if(!accepted || !valid()){if(accepted)await cancel();throw Error('桌宠正在处理其它操作');}
+  let checking=false,watching=true,invalid=false;
+  const changed=p=>!p || p.kind!=='desktop' || p.visible===false || Math.hypot(p.x-point.x,p.y-point.y)>8;
+  const unavailable=()=>Object.assign(Error('文件图标已移动、隐藏或不可见'),{code:'DESKTOP_TARGET_UNAVAILABLE'});
+  const timer=setInterval(async()=>{
+    if(checking || !watching || !valid())return;checking=true;
+    try{
+      const p=await locate(file,pet,['-DesktopOnly']);
+      if(watching && valid() && changed(p)){invalid=true;await cancel();}
+    }finally{checking=false;}
+  },1800);
+  try {
+    if(!valid())throw Error('靠近已取消');
+    if(prepareDialogue){
+      const canSpeak=()=>watching && !invalid && valid();
+      void Promise.resolve().then(()=>prepareDialogue(canSpeak)).then(lines=>{
+        if(!lines || !canSpeak())return;
+        return evaluate(pet,function(id,lines){
+          const s=sprites[0];
+          if(s?.fishDesktopVisitToken===id)s.fishDesktopDialogue={id,lines};
+        },token,lines);
+      }).catch(()=>{});
+    }
+    const final=await approach(pet,point,()=>locate(file,pet,['-DesktopOnly']),actions.desktopWalk,{token,idle:actions.idle.clip});
+    if(invalid || changed(final))throw unavailable();
+    if(!valid())throw Error('靠近已取消');
+    const playWithLine=(action,key)=>evaluate(pet,noticeFile,action.clip,action.timeoutMs,token,
+      {key,from:action.speechAtMs,until:action.speechUntilMs});
+    const peeked=await playWithLine(actions.desktopPeek,'peek');
+    if(!peeked)throw Error('偷偷看文件动作未完整播放');
+    if(!valid() || invalid)throw Error('文件图标已移动、隐藏或不可见');
+    // 看完之后沿用桌面任务令牌播放收尾，随机动作不会插在两段之间。
+    const reacted=await playWithLine(actions.desktopReaction,'reaction');
+    if(!reacted || !valid() || invalid)throw Error('文件观察收尾被中断');
+    await evaluate(pet,function(id,clip){
+      const s=sprites[0];if(s.fishDesktopVisitToken!==id || s.dragState.active)throw Error('靠近已取消');
+      s.stopMove();s.stopThrow();s.playOnce(clip);
+    },token,actions.idle.clip);
+    return {x:final.x,y:final.y};
+  } catch (e) {
+    if(invalid && valid())throw unavailable();
+    throw e;
+  } finally {
+    watching=false;clearInterval(timer);
+    if(!pet.isDestroyed())await evaluate(pet,function(id){
+      const s=sprites[0];if(s.fishDesktopVisitToken===id)s.fishDesktopVisitToken=null;
+      if(s.fishDesktopDialogue?.id===id)s.fishDesktopDialogue=null;
+    },token).catch(()=>{});
+  }
+};
 module.exports.startJourney=async function(pet,point){
   const origin=await geometry(pet);
   await approach(pet,point);

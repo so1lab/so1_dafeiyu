@@ -1,0 +1,14 @@
+	if(input.rest==="life-awareness") {
+		if(input.method!=="POST")return methodNotAllowed();
+		let value;try{value=JSON.parse(input.body || "{}");}catch{return okResult({ok:false});}
+		if(typeof value.petId!=="string" || value.petId.length>80 || !Array.isArray(value.events) || value.events.length>2000 ||
+			(input.body || "").length>2500000)return okResult({ok:false});
+		if(!findPetInstance(readAllConfig(deps.configPaths),value.petId))return okResult({ok:false});
+		const key=Symbol.for("so1.dafeiyu.experiences"),store=globalThis[key] || (globalThis[key]=new Map());
+		const old=store.get(value.petId);
+		if(!old && value.since)return okResult({ok:false,needFull:true});
+		const rows=new Map((old?.events || []).map(e=>[e.id,e]));
+		for(const e of value.events)if(e && typeof e.id==="string" && typeof e.text==="string" && Number.isFinite(e.at))rows.set(e.id,e);
+		store.set(value.petId,{current:value.current,previous:value.previous,events:[...rows.values()].slice(-2000),at:Date.now(),observed:old?.observed || []});
+		return okResult({ok:true,observed:old?.observed || []});
+	}
