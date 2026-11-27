@@ -11,7 +11,7 @@ module.exports = function startInbox(pets,host) {
   let config = {};
   try { config = JSON.parse(fs.readFileSync(settings, 'utf8')); } catch {}
   const save = () => fs.writeFileSync(settings, JSON.stringify(config));
-  const life = require('./life.cjs')({pets,data,config,save,host});
+  const life = require('./life.cjs')({pets,data,config,save,host,warehouse:()=>runWorker({action:'warehouse_memory'},root())});
   const docs=app.getPath('documents');
   const oldDefault=path.join(docs,'桌宠收纳箱');
   const custom=config.root && path.resolve(config.root)!==path.resolve(oldDefault);
@@ -41,7 +41,7 @@ module.exports = function startInbox(pets,host) {
       const python = JSON.parse(fs.readFileSync(path.join(__dirname,'runtime.json'))).python;
       const child = spawn(python,['-X','utf8',path.join(__dirname,'worker.py'),target,path.join(data,'history.sqlite')],
         {windowsHide:true,stdio:['pipe','pipe','pipe']});
-      const timer=['desktop_excerpt','warehouse_memory'].includes(req.action)?setTimeout(()=>child.kill(),3500):null;
+      const timer=['sample','desktop_excerpt','warehouse_memory'].includes(req.action)?setTimeout(()=>child.kill(),3500):null;
       let result, errorText = '';
       child.on('error',reject);
       child.stdin.on('error',reject);
@@ -79,6 +79,7 @@ module.exports = function startInbox(pets,host) {
   const showRecommendation=require('./feed.cjs')(pets);
   ipcMain.on('inbox:feed-recommendation',e=>{if(senderPet(e))showRecommendation();});
   require('./memory-panel.cjs')({life,senderPet,warehouse:()=>runWorker({action:'warehouse_memory'},root())});
+  require('./life-settings.cjs')({life,senderPet,pets,host});
   ipcMain.on('inbox:life-fact',(e,fact)=>{const pet=senderPet(e);if(pet)try{life.ingest(pet,fact);}catch(err){console.warn('[fish-life] 经历未能写盘',err.message);}});
   ipcMain.on('inbox:mouth-pose',(e,stage)=>{
     const pet=senderPet(e);
@@ -185,25 +186,27 @@ module.exports = function startInbox(pets,host) {
         const paths=[...new Set(req.paths)];
         let done=0,success=0;
         const failed=[];
-        for(const file of paths){
-          const one={action:'drop',paths:[file],batch};
-          const notice=setTimeout(()=>say('正在辨认 · '+(done+1)+'/'+paths.length),1000);
-          try{if(host)one.plans=await require('./analyze.cjs')(one,target,worker,host);}
-          finally{clearTimeout(notice);}
-          result=await worker(one,target);
-          if(result.deliveries?.length)life.record(pet,'task.file_filed',{batch,count:result.deliveries.reduce((n,g)=>n+g.count,0),
-            folders:result.deliveries.map(g=>path.basename(g.folder))});
-          if(!result.deliveries?.length && fs.existsSync(file))failed.push(file);
-          for(const group of result.deliveries || []){
-            success+=group.count;
-            if(groups.has(group.folder)){const prior=groups.get(group.folder);prior.count+=group.count;prior.ids.push(...group.ids);}
-            else {
-              groups.set(group.folder,group);
+        const notice=setTimeout(()=>say('正在辨认 · '+paths.length+' 份文件'),1000);
+        try{
+          for await(const {file,sample,plan} of require('./analyze.cjs')(paths,target,worker,host)){
+            const one={action:'drop',paths:[file],batch,sample,plans:plan?{[file]:plan}:{}};
+            try{result=await worker(one,target);}
+            catch(error){
+              console.warn('[inbox] 单文件处理失败',error.message);
+              result={message:'有文件未能收纳，请核对原位置'};
             }
+            if(result.deliveries?.length)life.record(pet,'task.file_filed',{batch,count:result.deliveries.reduce((n,g)=>n+g.count,0),
+              folders:result.deliveries.map(g=>path.basename(g.folder))});
+            if(!result.deliveries?.length && fs.existsSync(file))failed.push(file);
+            for(const group of result.deliveries || []){
+              success+=group.count;
+              if(groups.has(group.folder)){const prior=groups.get(group.folder);prior.count+=group.count;prior.ids.push(...group.ids);}
+              else groups.set(group.folder,group);
+            }
+            say('已处理 '+(++done)+'/'+paths.length+' · 已归档 '+success);
+            library.refresh();
           }
-          say('已处理 '+(++done)+'/'+paths.length+' · 已归档 '+success);
-          library.refresh();
-        }
+        }finally{clearTimeout(notice);}
         if(success>0)life.complete(pet,{count:success,batch,folders:[...groups.keys()].map(p=>path.basename(p))});
         if(success<paths.length)life.record(pet,'task.failed',{count:paths.length-success,batch});
         if(paths.length>1)result={message:'已归档 '+success+'/'+paths.length+' 项'};
@@ -262,7 +265,7 @@ module.exports = function startInbox(pets,host) {
   const settingsMenu = win => [
     {label:'自主生活',type:'checkbox',checked:config.lifeEnabled!==false,click:item=>life.settings({enabled:item.checked})},
     {label:'安静陪伴',type:'checkbox',checked:!!config.lifeQuiet,click:item=>life.settings({quiet:item.checked})},
-    {label:'问大肥鱼找文件',click:library.show},
+    {label:'问大肥鱼找文件',click:()=>library.show()},
     {label:'打开收纳目录',click:openRoot},
     {label:'精简搬运动画',type:'checkbox',checked:!!config.reduced,click:item=>{config.reduced=item.checked;save();}},
     {label:'最近收纳记录',click:()=>queue({action:'history'})},

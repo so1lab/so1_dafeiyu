@@ -1,39 +1,24 @@
 :root {
-  color-scheme: dark;
-  font: 14px/1.65 "Microsoft YaHei UI", "Segoe UI", sans-serif;
-  background: #111c30;
-  color: #ebf3ff;
-  --panel: #182641;
-  --line: #33486a;
-  --muted: #a8bedc;
-  --cyan: #8ce2f5;
+  --panel: var(--surface);
+  --cyan: var(--accent);
 }
-* { box-sizing: border-box; }
-body { margin: 0; padding: 20px 25px 26px; }
-[hidden] { display: none !important; }
-header, .brand, .controls, nav, .row { display: flex; align-items: center; gap: 10px; }
+body { padding: 18px 24px 22px; }
+header, .controls, nav, .row { display: flex; align-items: center; gap: 10px; }
 header { justify-content: space-between; }
-.brand img { width: 64px; height: 64px; object-fit: contain; border-radius: 15px; background: #263858; }
 h1, h2, h3, p { margin: 0; }
-h1 { font-size: 24px; }
 h2 { font-size: 17px; margin-bottom: 10px; }
 h3 { font-size: 15px; }
 .hint, small { color: var(--muted); }
 nav { padding: 13px 0 10px; border-bottom: 1px solid var(--line); }
-button, input, select, textarea {
-  font: inherit; color: inherit; border: 1px solid var(--line); border-radius: 8px; background: #223554; padding: 5px 10px;
-}
-button { cursor: pointer; }
-button:hover, button:focus-visible { border-color: var(--cyan); }
-button[aria-pressed="true"], .primary { color: #0e223c; background: var(--cyan); border-color: var(--cyan); font-weight: 600; }
 #message { min-height: 24px; color: var(--cyan); padding-top: 3px; }
+#message:empty { min-height: 12px; padding: 0; }
 .columns { display: grid; grid-template-columns: minmax(185px, 28%) minmax(0, 1fr); gap: 13px; }
 aside, article { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 15px; }
 .choice { display: flex; align-items: center; gap: 7px; }
 #episodes { margin-top: 10px; max-height: 54vh; overflow: auto; }
 .episode-button { width: 100%; text-align: left; margin-bottom: 6px; overflow-wrap: anywhere; }
 .episode-button small { display: block; }
-.episode-button[aria-current="true"] { border-color: var(--cyan); background: #2a4466; }
+.episode-button[aria-current="true"] { border-color: #bfd2f3; background: var(--accent-soft); color: var(--accent); }
 .preview { display: block; width: 100%; height: 158px; object-fit: contain; border-radius: 10px; background: #111b2f; }
 .steps { margin: 9px 0 0; padding: 0; list-style: none; }
 .steps button { width: 100%; text-align: left; margin-bottom: 5px; }
@@ -57,6 +42,7 @@ button:disabled { opacity: .45; cursor: default; }
 .graph-layout { display: grid; grid-template-columns: minmax(0, 1fr) 245px; gap: 12px; }
 .graph-main { min-width: 0; }
 .graph-stage {
+  color-scheme: dark;
   position: relative; min-width: 0; height: clamp(290px, calc(100vh - 288px), 620px);
   overflow: hidden; border: 1px solid #31466b; border-radius: 14px;
   background:
@@ -69,8 +55,8 @@ button:disabled { opacity: .45; cursor: default; }
 #constellation[data-zoom="125"] svg { width: 125%; height: 125%; }
 #constellation[data-zoom="160"] svg { width: 160%; height: 160%; }
 #constellation[data-zoom="200"] svg { width: 200%; height: 200%; }
-.graph-empty { position: absolute; left: 0; right: 0; bottom: 20px; text-align: center; color: var(--muted); pointer-events: none; }
-.graph-drag-hint { position: absolute; right: 12px; bottom: 9px; color: var(--muted); font-size: 11px; pointer-events: none; }
+.graph-empty { position: absolute; left: 0; right: 0; bottom: 20px; text-align: center; color: #bacbed; pointer-events: none; }
+.graph-drag-hint { position: absolute; right: 12px; bottom: 9px; color: #bacbed; font-size: 11px; pointer-events: none; }
 .sky-dust { fill: #c8d9ff; }
 .region { color: #a790e9; pointer-events: none; }
 .region-memory { color: #70e4d4; }

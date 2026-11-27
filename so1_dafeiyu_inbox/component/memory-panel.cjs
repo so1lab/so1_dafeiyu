@@ -1,5 +1,6 @@
 const {BrowserWindow,ipcMain}=require('electron');
 const path=require('node:path');
+const presentWindow=require('./present-window.cjs');
 
 module.exports=function memoryPanel({life,senderPet,warehouse}){
   let panel,warehouseCache,warehouseRequest;
@@ -15,22 +16,16 @@ module.exports=function memoryPanel({life,senderPet,warehouse}){
     }
     return {...view,warehouseFiles:warehouseCache.files};
   }
-  function showWindow(win){
-    if(win.isMinimized())win.restore();
-    if(!win.isVisible())win.show();
-    // Bring the cabin above other normal windows even if Windows declines keyboard focus.
-    win.moveTop();
-    win.focus();
-  }
   ipcMain.on('inbox:memory-open',event=>{
     if(!senderPet(event))return;
     if(panel && !panel.isDestroyed()){
-      showWindow(panel);
+      presentWindow(panel);
+      if(!panel.webContents.isLoadingMainFrame())panel.webContents.send('inbox:memory-focus-graph');
       return;
     }
     const win=new BrowserWindow({
       title:'大肥鱼的记忆舱',width:1060,height:730,minWidth:690,minHeight:510,show:false,
-      autoHideMenuBar:true,backgroundColor:'#111c30',
+      autoHideMenuBar:true,backgroundColor:'#f5f7fb',
       webPreferences:{preload:path.join(__dirname,'memory-preload.js'),sandbox:true,contextIsolation:true,nodeIntegration:false}
     });
     panel=win;warehouseCache=null;win.setMenu(null);
@@ -38,7 +33,7 @@ module.exports=function memoryPanel({life,senderPet,warehouse}){
     win.webContents.on('will-navigate',event=>event.preventDefault());
     win.on('closed',()=>{if(panel===win)panel=null;});
     // Opening the panel must not depend on a first paint or on the warehouse query.
-    showWindow(win);
+    presentWindow(win);
     win.loadFile(path.join(__dirname,'memory.html')).catch(error=>{
       console.warn('[fish-memory] 记忆舱打开失败',error.message);
       if(!win.isDestroyed())win.close();

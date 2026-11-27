@@ -5,8 +5,10 @@ const readline = require('node:readline');
 const core = require('./life-core.cjs'), pulse = require('./life-renderer.cjs');
 const walk = require('./actions.json').walk;
 const taskGuard=require('./task-guard.cjs');
+const catalog=require('./action-catalog.json').actions;
+const {warehouseSearch}=require('./memory-search.cjs');
 
-module.exports = function startLife({pets, data, config, save, host}) {
+module.exports = function startLife({pets, data, config, save, host, warehouse}) {
   const file=path.join(data,'life-state.json');
   let saved={};
   let availableClips=[];
@@ -19,7 +21,7 @@ module.exports = function startLife({pets, data, config, save, host}) {
   try{notebook=require('./pet-memory.cjs')(data);}
   catch(e){console.warn('[fish-memory] 本地记忆库不可用',e.message);}
   const memoryAcks=new Map(),suggestions=new Map();
-  let publishing=false,publishAgain=false,lastPublish=0;
+  let publishing=false,publishAgain=false;
   const petId=pet=>latest.get(pet)?.id || [...pets.entries()].find(([,p])=>p===pet)?.[0] || (pets.size===1?'main':null);
   function record(pet,type,details={}) {
     const id=petId(pet);if(typeof id!=='string')return;
@@ -37,21 +39,23 @@ module.exports = function startLife({pets, data, config, save, host}) {
     try {
       for(const pet of pets.values()) {
         if(pet.isDestroyed())continue;
-        const id=petId(pet);if(typeof id!=='string')continue;const view=memory.view(id);
+        const id=petId(pet);if(typeof id!=='string')continue;
+        const {current,previous}=memory.view(id);
         const events=memory.since(id,published.get(id)),since=published.get(id);
         // 完整路径只留在本机日志/面板，发送给聊天的事实移除 path 字段。
         const shared=value=>Array.isArray(value)?value.map(shared):value&&typeof value==='object'?
           Object.fromEntries(Object.entries(value).filter(([key])=>key!=='path' && key!=='line').map(([key,v])=>[key,shared(v)])):value;
-        const reply=await host('POST','/dsh-pet-7340/life-awareness',JSON.stringify(shared({petId:id,...view,events,since,
-          notebook:notebook?{key:notebook.bridgeKey,entries:notebook.chatContext(id),suggest:config.memorySuggestions===true,
-            acks:[...(memoryAcks.get(id)||new Map()).entries()]}:null})));
+        const reply=await host('POST','/dsh-pet-7340/life-awareness',JSON.stringify(shared({petId:id,current,previous,events,since,
+          actions:!since && id==='main'?catalog.filter(row=>availableClips.includes(row.name) && ['react','topic','request'].includes(row.dialogue))
+            .map(({name,dialogue,scene})=>({name,dialogue,scene})):undefined,
+          notebook:notebook?{key:notebook.bridgeKey,entries:[],suggest:config.memorySuggestions===true,
+            hasMemories:notebook.hasMemories(id),acks:[...(memoryAcks.get(id)||new Map())].filter(([,value])=>value!==undefined)}:null})));
         const result=JSON.parse(reply.body);
         for(const fact of result.observed || [])memory.append(fact);
         for(const request of (result.memoryRequests || []).slice(0,8))handleMemoryRequest(id,request);
         if(result.needFull){published.delete(id);publishAgain=true;}
         else if(result.ok && events.length)published.set(id,events.at(-1).id);
       }
-      lastPublish=Date.now();
     } catch(e) { log(e); }
     finally {publishing=false;if(publishAgain){publishAgain=false;void publish();}}
   }
@@ -61,11 +65,21 @@ module.exports = function startLife({pets, data, config, save, host}) {
     if(!memoryAcks.has(id))memoryAcks.set(id,new Map());
     const receipts=memoryAcks.get(id);
     if(receipts.has(request.id))return;
-    const ack=ok=>{
-      receipts.set(request.id,ok);
+    const ack=value=>{
+      receipts.set(request.id,value);
       if(receipts.size>32)receipts.delete(receipts.keys().next().value);
     };
-    if(request.kind==='write'){
+    if(request.kind==='recall' && typeof request.text==='string'){
+      try{ack({entries:notebook.chatContext(id,request.text)});}
+      catch{ack(null);}
+      publishAgain=true;
+    } else if(request.kind==='warehouse' && typeof request.text==='string' && typeof warehouse==='function'){
+      // Reserve the request while the worker runs. Pending reservations are never sent as receipts.
+      ack(undefined);
+      void warehouse().then(result=>{
+        if(!disposed)ack({files:warehouseSearch(result.files,request.text)});
+      }).catch(()=>{if(!disposed)ack(null);}).finally(()=>{if(!disposed)void publish();});
+    } else if(request.kind==='write'){
       try{
         notebook.insert(id,request.key,request.value,{source:'chat',evidence:request.text,requestId:request.id});
         ack(true);publishAgain=true;refresh();
@@ -142,7 +156,6 @@ module.exports = function startLife({pets, data, config, save, host}) {
         });
       }
       if(Date.now()-lastSave>30000) persist();
-      if(Date.now()-lastPublish>5000)void publish();
     } catch(e) { if(!pet.isDestroyed()) log(e); }
     finally { running.delete(pet); }
   }
@@ -204,7 +217,7 @@ module.exports = function startLife({pets, data, config, save, host}) {
         source:s.source,planning:s.planning,planner:planner.status(p)}))};
   }
   function dispose() {
-    if(disposed)return; disposed=true;clearInterval(timer);desktop?.dispose();persist();sensor?.kill();planner.dispose();
+    if(disposed)return; disposed=true;clearInterval(timer);clearInterval(bridgeTimer);desktop?.dispose();persist();sensor?.kill();planner.dispose();
     powerMonitor.removeListener('suspend',suspend); powerMonitor.removeListener('lock-screen',suspend);
     powerMonitor.removeListener('resume',resume); powerMonitor.removeListener('unlock-screen',resume);
     app.removeListener('before-quit',dispose); holds.clear(); latest.clear();
@@ -215,6 +228,9 @@ module.exports = function startLife({pets, data, config, save, host}) {
     refresh();
   },2000);
   timer.unref(); app.once('before-quit',dispose); refresh();
+  const bridgeTimer=setInterval(()=>void publish(),1250);
+  bridgeTimer.unref();
+  void publish();
   const canBackground=(pet,stationary=false)=>!disposed && !holds.get(pet)?.size &&
     !!latest.get(pet)?.[stationary?'stationaryReady':'backgroundReady'];
   function memoryPolicy(pet){
@@ -236,7 +252,7 @@ module.exports = function startLife({pets, data, config, save, host}) {
       (['activity.started','activity.completed','activity.interrupted','activity.failed'].includes(e.type) &&
         e.details.activity && !['quiet','external'].includes(e.details.activity))).slice(-360);
     const byClip=new Map();
-    if(id==='main')for(const row of require('./action-catalog.json').actions){
+    if(id==='main')for(const row of catalog){
       if(availableClips.includes(row.name))byClip.set(row.name,{...row,preview:true,runs:0});
     }
     const started=new Set(),lastRun=new Map();

@@ -56,6 +56,7 @@ module.exports=function experience(data) {
       decision:'留在用户选择的位置，放弃旧路线',interruptedBy:'用户拖动'});
   }
   try {for(const line of fs.readFileSync(file,'utf8').split('\n')){try{const e=JSON.parse(line);if(e.id&&types.has(e.type)){facts.push(e);ids.add(e.id);reduce(e);}}catch{}}}catch{}
+  let writesSinceCompact=Math.max(0,facts.length-2000),compactPending=false;
   while(facts.length>2000){ids.delete(facts.shift().id);}
   function append(raw) {
     if(!raw || !types.has(raw.type) || typeof raw.id!=='string' || raw.id.length>200 || ids.has(raw.id))return false;
@@ -68,8 +69,21 @@ module.exports=function experience(data) {
     const e={id:raw.id,petId:text(raw.petId,80) || 'main',at:Number.isFinite(raw.at)?raw.at:Date.now(),type:raw.type,
       actor:raw.type.startsWith('user.')?'user':raw.type.startsWith('activity.')?'pet':'system',details};
     e.text=describe(e);fs.appendFileSync(file,JSON.stringify(e)+'\n','utf8');facts.push(e);ids.add(e.id);reduce(e);
-    if(facts.length>2000){while(facts.length>2000)ids.delete(facts.shift().id);
-      fs.writeFileSync(file+'.tmp',facts.map(x=>JSON.stringify(x)).join('\n')+'\n');fs.renameSync(file+'.tmp',file);}
+    if(facts.length>2000){
+      ids.delete(facts.shift().id);
+      if(++writesSinceCompact>=128 && !compactPending){
+        compactPending=true;
+        // Keep append durable. Compact a bounded set between batches, never before acknowledging an event.
+        setImmediate(()=>{
+          compactPending=false;
+          try{
+            fs.writeFileSync(file+'.tmp',facts.map(x=>JSON.stringify(x)).join('\n')+'\n');
+            fs.renameSync(file+'.tmp',file);
+          }catch{ /* The append-only journal remains recoverable. */ }
+          writesSinceCompact=0;
+        });
+      }
+    }
     return true;
   }
   let seq=0;const session=Date.now()+'-'+process.pid;

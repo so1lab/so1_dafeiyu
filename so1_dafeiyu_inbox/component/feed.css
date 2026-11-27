@@ -1,0 +1,14 @@
+body { padding: 20px; }
+main { max-width: 370px; margin: auto; }
+header { margin-bottom: 15px; }
+p { margin: 0 0 8px; color: var(--muted); }
+strong { color: var(--accent); }
+figure {
+  margin: 14px 0 0; padding: 12px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--panel-radius); text-align: center;
+}
+.feed-qr { display: block; width: min(100%, 212px); height: auto; margin: auto; }
+figcaption { margin-top: 6px; color: var(--muted); font-size: 13px; }
+.ref { margin: 11px 0 0; text-align: center; }
+code { margin-left: 5px; color: var(--accent); font: 600 14px Consolas, monospace; }
+@media (max-height: 530px) { .feed-qr { width: min(100%, 165px); } }

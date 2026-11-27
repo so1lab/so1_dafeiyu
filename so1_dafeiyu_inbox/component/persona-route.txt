@@ -1,0 +1,50 @@
+	if(input.rest==="life-persona"){
+		if(input.method!=="POST")return methodNotAllowed();
+		let request;
+		try { request=JSON.parse(input.body || "{}"); }
+		catch {return okResult({ok:false,reason:"invalid"});}
+		if(!request || typeof request.id!=="string" || !request.id)
+			return okResult({ok:false,reason:"invalid"});
+		const view=found=>({
+			ok:true,name:found.pet.name || found.pet.id,
+			prompt:typeof found.pet.whisperPrompt==="string"?found.pet.whisperPrompt:"",
+			defaultPrompt:found.conf.whisperPrompt || ""
+		});
+		try {
+			const found=findPetInstance(readAllConfig(deps.configPaths),request.id);
+			if(!found)return okResult({ok:false,reason:"missing"});
+			if(!Object.hasOwn(request,"prompt"))return okResult(view(found));
+			if(typeof request.prompt!=="string" || typeof request.expected!=="string")
+				return okResult({ok:false,reason:"invalid"});
+			const current=view(found);
+			if(current.prompt!==request.expected)return okResult({ok:false,reason:"changed"});
+			const prompt=request.prompt.trim();
+			if(prompt===current.prompt)return okResult(current);
+			const resolved=resolveConfigLayer(deps,found.entry);
+			if(!resolved.ok || (found.entry==="main" && userConfigUnparsable(deps.configPaths)))
+				return okResult({ok:false,reason:"config-unreadable"});
+			const layer=resolved.layer;
+			const existing=layer.existing || {};
+			const pets=Object.hasOwn(existing,"pets")?existing.pets:found.conf.pets;
+			if(!Array.isArray(pets))return okResult({ok:false,reason:"config-unreadable"});
+			let updated=0;
+			const nextPets=pets.map(pet=>{
+				if(typeof pet?.id!=="string" || pet.id.trim()!==request.id)return pet;
+				updated++;
+				const next={...pet};
+				if(prompt)next.whisperPrompt=prompt;
+				else delete next.whisperPrompt;
+				return next;
+			});
+			if(updated!==1)return okResult({ok:false,reason:"config-unreadable"});
+			// Only replace the owning instance's field. Host text generation rereads this layer.
+			const temporary=layer.path+".fish-persona-"+Date.now()+"-"+Math.random().toString(36).slice(2)+".tmp";
+			try {
+				mkdirSync(layer.dir,{recursive:true});
+				writeFileSync(temporary,JSON.stringify({...existing,pets:nextPets},null,2)+"\n","utf8");
+				renameSync(temporary,layer.path);
+			} finally {try{unlinkSync(temporary);}catch{}}
+			deps.state?.writeSection?.("config",{});
+			return okResult({...current,prompt});
+		} catch {return okResult({ok:false,reason:"unavailable"});}
+	}

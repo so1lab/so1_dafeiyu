@@ -1,26 +1,13 @@
-// 生活信息放在独立面板，文件管理仍是双击后的主页。
 (() => {
-  const button=document.createElement('button');button.textContent='大肥鱼的生活';
-  document.querySelector('#more').before(button);
-  const panel=document.createElement('dialog');panel.className='life-panel';
-  panel.innerHTML='<div class="bar"><h2>大肥鱼的生活</h2><button data-close>关闭</button></div>'+
-    '<p class="life-intro">慢慢活动，安静陪伴。接到文件时，会先把你的事情做好。</p>'+
-    '<div class="life-options"><label><input type="checkbox" data-enabled> 自主生活</label>'+
-    '<label><input type="checkbox" data-quiet> 安静陪伴</label><label><input type="checkbox" data-ai> DeepSeek 规划</label>'+
-    '<label><input type="checkbox" data-desktop> 桌面新文件靠近测试</label>'+
-    '<label><input type="checkbox" data-dialogue-ai> DeepSeek 桌面台词</label></div>'+
-    '<small>安静陪伴会暂停散步、玩耍等自主活动，仍然可以聊天和投喂。</small>'+
-    '<div data-desktop-status></div><div data-state role="status"></div><div data-planner></div><button data-replan>重新规划</button> <button data-resume hidden>继续刚才的小活动</button><h3>最近的小经历</h3><ol data-history></ol>'+
-    '<small>规划只发送简要状态与近期小经历，通过 dsh 已配置的 DeepSeek 调用。文件正文和其它应用内容不进入生活规划。</small>';
-  document.body.append(panel);
-  let timer,loading=false,pendingPatch=null;
+  const panel=document.getElementById('behavior');
+  let loading=false,pendingPatch=null;
   const enabled=panel.querySelector('[data-enabled]'),quiet=panel.querySelector('[data-quiet]'),ai=panel.querySelector('[data-ai]');
   const desktopToggle=panel.querySelector('[data-desktop]');
   const dialogueAI=panel.querySelector('[data-dialogue-ai]');
   async function render(patch) {
     if(loading){if(patch)pendingPatch={...pendingPatch,...patch};return;} loading=true;
     try {
-      const status=await library.life(patch);if(!status)return;
+      const status=await window.fishSettings.life(patch);if(!status)return;
       enabled.checked=status.enabled;quiet.checked=status.quiet;quiet.disabled=!status.enabled;
       ai.checked=status.ai!==false;ai.disabled=!status.enabled;
       const desktop=status.desktop;desktopToggle.checked=!!desktop?.enabled;
@@ -74,12 +61,76 @@
     } catch { panel.querySelector('[data-state]').textContent='暂时无法读取状态，请稍后重试。'; }
     finally { loading=false;if(pendingPatch){const next=pendingPatch;pendingPatch=null;void render(next);} }
   }
-  button.onclick=()=>{panel.showModal();void render();clearInterval(timer);timer=setInterval(()=>render(),2500);};
-  panel.querySelector('[data-close]').onclick=()=>panel.close();
-  panel.addEventListener('close',()=>clearInterval(timer));
   enabled.onchange=()=>render({enabled:enabled.checked});quiet.onchange=()=>render({quiet:quiet.checked});
   ai.onchange=()=>render({ai:ai.checked});panel.querySelector('[data-replan]').onclick=()=>render({replan:true});
   panel.querySelector('[data-resume]').onclick=()=>render({resume:true});
   desktopToggle.onchange=()=>render({desktop:desktopToggle.checked});
   dialogueAI.onchange=()=>render({dialogueAI:dialogueAI.checked});
+
+  const $=id=>document.getElementById(id);
+  const editor=$('personaText'),save=$('personaSave'),reset=$('personaReset'),reload=$('personaReload');
+  const feedback=$('personaStatus');
+  let page='behavior',savedPersona=null,personaBusy=false;
+  const dirty=()=>savedPersona!==null && editor.value.trim()!==savedPersona.prompt.trim();
+  function updateEditor(){
+    editor.disabled=personaBusy || !savedPersona;
+    save.disabled=editor.disabled || !dirty();
+    reset.disabled=editor.disabled || !editor.value.trim();
+    reload.disabled=personaBusy;
+  }
+  function applyPersona(result){
+    savedPersona=result;
+    editor.value=result.prompt;
+    editor.placeholder=result.defaultPrompt;
+    $('personaScope').textContent='当前桌宠：'+result.name+'。用于聊天、碎碎念和桌面台词。留空时沿用 dsh-pet 默认人设。';
+  }
+  async function readPersona(){
+    if(personaBusy)return;
+    personaBusy=true;updateEditor();feedback.textContent='正在读取性格…';
+    try{
+      const result=await window.fishSettings.persona();
+      if(!result?.ok)throw Error();
+      applyPersona(result);
+      feedback.textContent=result.prompt?'当前使用自定义性格。':'当前使用默认人设。';
+    }catch{feedback.textContent='暂时无法读取性格，请重试。';}
+    finally{personaBusy=false;updateEditor();}
+  }
+  $('personaForm').onsubmit=async event=>{
+    event.preventDefault();
+    if(save.disabled)return;
+    personaBusy=true;updateEditor();feedback.textContent='正在保存…';
+    try{
+      const result=await window.fishSettings.persona({prompt:editor.value,expected:savedPersona.prompt});
+      if(result?.ok){
+        applyPersona(result);
+        feedback.textContent=result.prompt?'已保存，下次生成回复或台词时生效。':'已恢复默认人设。';
+      }else if(result?.reason==='changed'){
+        feedback.textContent='性格已在别处修改。请复制当前草稿，再重新读取。';
+      }else if(result?.reason==='config-unreadable'){
+        feedback.textContent='dsh-pet 配置无法读取，当前草稿已保留。';
+      }else feedback.textContent='保存失败，当前草稿已保留。';
+    }catch{feedback.textContent='保存失败，当前草稿已保留。';}
+    finally{personaBusy=false;updateEditor();}
+  };
+  editor.oninput=()=>{feedback.textContent=dirty()?'有未保存的修改。':'';updateEditor();};
+  reset.onclick=()=>{
+    editor.value='';
+    feedback.textContent=dirty()?'保存后将恢复默认人设。':'已使用默认人设。';
+    updateEditor();
+  };
+  reload.onclick=()=>{
+    if(!dirty() || window.confirm('放弃当前未保存的修改？'))void readPersona();
+  };
+  const tabs=[...document.querySelectorAll('[data-page]')];
+  for(const tab of tabs)tab.onclick=()=>{
+    page=tab.dataset.page;
+    for(const item of tabs){
+      item.setAttribute('aria-pressed',String(item===tab));
+      $(item.dataset.page).hidden=item!==tab;
+    }
+    if(page==='persona' && !savedPersona)void readPersona();
+    if(page==='behavior')void render();
+  };
+  void render();
+  setInterval(()=>{if(page==='behavior' && !document.hidden)void render();},2500);
 })();

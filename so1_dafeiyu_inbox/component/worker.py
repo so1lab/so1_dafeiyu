@@ -114,7 +114,7 @@ def run(req, db, root):
         except Exception:
             return {}
         folders=inventory(root)
-        return {"sig":sig,"body":body[:3500],"categories":categories(root)[:100],"candidates":shortlist(db,root,folders,p.stem+" "+body[:3500])}
+        return {"sig":sig,"body":body[:3500],"localBody":body[:32768],"categories":categories(root)[:100],"candidates":shortlist(db,root,folders,p.stem+" "+body[:3500])}
     if action == "forget":
         db.execute("delete from aliases where root=? and term=?",(str(root),req["term"]))
         db.commit()
@@ -224,10 +224,14 @@ def run(req, db, root):
             if not src.is_absolute() or src.is_symlink() or not src.is_file() or (action == "drop" and src.resolve().is_relative_to(root)):
                 raise ValueError("仅接收收纳箱之外的普通文件")
             sig = identity(src)
-            try:
-                body = sample_text(src)
-            except Exception:
-                body = ""
+            if action=="drop" and "sample" in req:
+                sample=req["sample"]
+                body=sample["body"] if isinstance(sample,dict) and sample.get("sig")==sig and isinstance(sample.get("body"),str) else ""
+            else:
+                try:
+                    body = sample_text(src)
+                except Exception:
+                    body = ""
             cat, reason = classify(src, body)
             default=cat
             plan = req.get("plans", {}).get(raw, {})

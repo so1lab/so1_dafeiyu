@@ -5,12 +5,13 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' file:; media-src file: 'self'">
   <title>大肥鱼的记忆舱</title>
+  <link rel="stylesheet" href="shell-ui.css">
   <link rel="stylesheet" href="memory.css">
   <script defer src="memory-ui.js"></script>
 </head>
 <body>
   <header>
-    <div class="brand"><img src="dafeiyu-default.png" alt=""><h1>大肥鱼的记忆舱</h1></div>
+    <div class="fish-brand"><img class="fish-logo" src="dafeiyu-default.png" alt=""><h1>大肥鱼的记忆舱</h1></div>
     <div class="controls"><label id="petLabel" hidden>桌宠 <select id="pets"></select></label><button id="refresh">刷新</button></div>
   </header>
   <nav aria-label="记忆舱视图">
@@ -65,7 +66,7 @@
         <form id="preference">
           <label>偏好类型<select id="key">
             <option value="work_move">工作时的走动</option><option value="quiet_hours">安静时段</option>
-            <option value="disdain">嫌弃脸频率</option><option value="persona">性格设定</option><option value="note">沟通重点</option>
+            <option value="disdain">嫌弃脸频率</option><option value="persona">自主活动风格</option><option value="note">沟通重点</option>
           </select></label>
           <div id="editor"></div>
           <button class="primary" type="submit">保存记忆</button>

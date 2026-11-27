@@ -26,6 +26,11 @@ function harness() {
   const trusted=type=>({type,isTrusted:true,target:{closest:()=>true}});
   return {s,a,b,tick,frames,listeners,trusted,clock:t=>clock=1000000+t};
 }
+const disabled=harness();
+disabled.tick(0,{enabled:false});
+disabled.s.switchTo('一脸嫌弃',true);
+disabled.a.emit('playing');disabled.a.emit('ended');
+assert(disabled.s.fishLife.events.some(e=>e.type==='activity.completed' && e.details.clip==='一脸嫌弃'));
 let h=harness();h.tick(0);assert.equal(h.s.fishLife.run.status,'preparing');
 assert(!h.s.fishLife.events.some(e=>e.type==='activity.completed'));
 h.a.emit('playing');assert.equal(h.s.fishLife.run.status,'running');

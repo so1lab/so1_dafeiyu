@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'">
+  <title>大肥鱼 · 生活设置</title>
+  <link rel="stylesheet" href="shell-ui.css">
+  <link rel="stylesheet" href="life-ui.css">
+  <script defer src="life-ui.js"></script>
+</head>
+<body class="life-panel">
+  <header class="fish-brand"><img class="fish-logo" src="dafeiyu-default.png" alt=""><h1>生活设置</h1></header>
+  <nav aria-label="设置类别">
+    <button type="button" data-page="behavior" aria-pressed="true">生活行为</button>
+    <button type="button" data-page="persona" aria-pressed="false">性格提示词</button>
+  </nav>
+  <main>
+    <section id="behavior">
+      <fieldset class="life-options">
+        <legend>自主生活</legend>
+        <label><input type="checkbox" data-enabled> 开启自主生活</label>
+        <label><input type="checkbox" data-quiet> 安静陪伴</label>
+        <label><input type="checkbox" data-ai> DeepSeek 规划</label>
+        <small>安静陪伴会暂停散步、玩耍等自主活动。</small>
+      </fieldset>
+      <fieldset class="life-options">
+        <legend>桌面观察</legend>
+        <label><input type="checkbox" data-desktop> 发现并靠近桌面新文件</label>
+        <label><input type="checkbox" data-dialogue-ai> DeepSeek 桌面台词</label>
+        <div data-desktop-status></div>
+      </fieldset>
+      <div data-state role="status"></div>
+      <div data-planner></div>
+      <div class="life-actions"><button type="button" data-replan>重新规划</button> <button type="button" data-resume hidden>继续刚才的小活动</button></div>
+      <details class="life-history"><summary>最近经历</summary><ol data-history></ol></details>
+      <small>开启 DeepSeek 规划后，会发送简要状态和近期经历用于安排行为。</small>
+    </section>
+    <section id="persona" hidden>
+      <form id="personaForm">
+        <label for="personaText">性格提示词</label>
+        <small id="personaScope">用于这只桌宠的聊天、碎碎念和桌面台词。留空会沿用 dsh-pet 默认人设。</small>
+        <textarea id="personaText" rows="9" aria-describedby="personaScope" disabled></textarea>
+        <div class="life-actions">
+          <button type="submit" id="personaSave" class="primary" disabled>保存性格</button>
+          <button type="button" id="personaReset" disabled>恢复默认</button>
+          <button type="button" id="personaReload">重新读取</button>
+        </div>
+        <p id="personaStatus" role="status"></p>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

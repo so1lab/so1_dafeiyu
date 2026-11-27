@@ -1,8 +1,9 @@
 const {DatabaseSync}=require('node:sqlite');
 const {randomUUID,randomBytes}=require('node:crypto');
 const path=require('node:path');
+const {rank}=require('./memory-search.cjs');
 
-const labels={work_move:'工作时少走动',quiet_hours:'安静时段',disdain:'「一脸嫌弃」频率',persona:'性格设定',note:'沟通重点'};
+const labels={work_move:'工作时少走动',quiet_hours:'安静时段',disdain:'「一脸嫌弃」频率',persona:'自主活动风格',note:'沟通重点'};
 const clean=(text,max=180)=>typeof text==='string'?text.replace(/[\u0000-\u001f]/g,' ').trim().slice(0,max):'';
 const clock=/^(?:[01]\d|2[0-3]):[0-5]\d$/;
 function normalize(key,value){
@@ -106,14 +107,18 @@ module.exports=function openPetMemory(data,now=Date.now){
     db.prepare('DELETE FROM decisions WHERE pet=? AND at<?').run(pet,now()-30*86400000);
   }
   function snapshot(pet,episodeIds=[]){
-    const rows=db.prepare('SELECT * FROM memories WHERE pet=? ORDER BY recorded_at DESC,rowid DESC LIMIT 150').all(pet)
+    const rows=db.prepare('SELECT * FROM memories WHERE pet=? ORDER BY recorded_at DESC,rowid DESC').all(pet)
       .map(decode).map(row=>({...row,label:labels[row.key],summary:describe(row)}));
     const decisions=db.prepare('SELECT * FROM decisions WHERE pet=? ORDER BY at DESC LIMIT 450').all(pet)
       .filter(row=>episodeIds.includes(row.episode)).map(row=>({...row,evidence:JSON.parse(row.evidence)}));
     return {memories:rows,decisions};
   }
-  function chatContext(pet){
-    return activeRows(pet).slice(0,40).map(row=>({text:describe(row),kind:row.key,at:row.valid_from}));
+  function chatContext(pet,question){
+    const rows=activeRows(pet);
+    const selected=question===undefined?rows.slice(0,40):rank(rows,question,
+      row=>[[describe(row),3],[labels[row.key],2],[row.evidence,1]],5);
+    return selected.map(row=>({text:describe(row),kind:row.key,at:row.valid_from}));
   }
-  return {insert,confirm,forget,policy,decide,snapshot,chatContext,bridgeKey,close:()=>db.close()};
+  return {insert,confirm,forget,policy,decide,snapshot,chatContext,hasMemories:pet=>activeRows(pet).length>0,
+    bridgeKey,close:()=>db.close()};
 };

@@ -89,11 +89,12 @@ module.exports = function lifePulse(createLife, env, saved, walk) {
     // 一套空闲入口：禁止上游随机链与新生活引擎同时决定下一条动作。
     s.playIdle = function() { return life.enabled ? boundary() : originalIdle.call(this); };
     s.switchTo = function(...args) {
-      if(!life.internal && life.enabled) {
+      if(!life.internal) {
         if(s.sleeping && args[0]==='睡觉-循环' && life.run?.activity==='nap') {
           life.run.clip=args[0];life.run.phase='等待睡眠循环';return originalSwitch.apply(this,args);
         }
-        stop('宿主或任务切换了动作');brain.interrupt(Date.now());
+        stop('宿主或任务切换了动作');
+        if(life.enabled)brain.interrupt(Date.now());
         const taskClips={'啊呜吞件':'receive','螃蟹走路-送件循环':'walk','轻轻丢文件-交接':'place','小小魔法-开合':'magic','收好啦等夸':'celebrate',
           '发现有文件':'discover_file','普通小跑-桌面靠近循环':'approach_file',
           '偷偷看文件':'peek_file','一脸嫌弃':'disdain_file',

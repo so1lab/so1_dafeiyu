@@ -1,28 +1,40 @@
 const {BrowserWindow,ipcMain,shell,dialog}=require('electron');
 const path=require('node:path');
+const presentWindow=require('./present-window.cjs');
 
 module.exports=function library({pets,worker,root,queue,life}) {
   let panel;
   const fromPet=e=>e.senderFrame===e.sender.mainFrame && Array.from(pets.values()).some(p=>!p.isDestroyed() && p.webContents===e.sender);
   const fromPanel=e=>panel && !panel.isDestroyed() && panel.webContents===e.sender && e.senderFrame===e.sender.mainFrame;
-  ipcMain.handle('inbox:life',(e,patch)=>{if(fromPanel(e))return patch ? life.settings(patch) : life.status();});
   const entries=async()=>(await worker({action:'catalog'},root())).entries;
-  function show(){
-    life?.record?.(null,'user.opened_warehouse');
-    if(panel && !panel.isDestroyed()){if(panel.webContents.getURL().endsWith('/replay.html'))panel.loadFile(path.join(__dirname,'library.html'));panel.show();panel.focus();return;}
-    panel=new BrowserWindow({width:1180,height:760,minWidth:620,minHeight:380,title:'大肥鱼的文件总览',autoHideMenuBar:true,
+  function loadLibrary(win){
+    void win.loadFile(path.join(__dirname,'library.html')).catch(error=>{
+      if(!win.isDestroyed()){console.warn('[inbox] 仓库窗口加载失败',error.message);win.close();}
+    });
+  }
+  function show(pet=null){
+    life?.record?.(pet,'user.opened_warehouse');
+    if(panel && !panel.isDestroyed()){
+      presentWindow(panel);
+      if(panel.webContents.getURL().endsWith('/replay.html'))loadLibrary(panel);
+      return;
+    }
+    const win=new BrowserWindow({width:1180,height:760,minWidth:620,minHeight:380,title:'大肥鱼仓库',
+      show:false,backgroundColor:'#f5f7fb',autoHideMenuBar:true,
       webPreferences:{preload:path.join(__dirname,'library-preload.js'),contextIsolation:true,sandbox:true,nodeIntegration:false}});
+    panel=win;win.setMenu(null);
     let watcher,timer;
     try{
       watcher=require('node:fs').watch(root(),{recursive:true},()=>{
-        clearTimeout(timer);timer=setTimeout(()=>{if(panel&&!panel.isDestroyed())panel.webContents.send('inbox:refresh');},450);
+        clearTimeout(timer);timer=setTimeout(()=>{if(!win.isDestroyed())win.webContents.send('inbox:refresh');},450);
       });
       watcher.on('error',()=>watcher.close());
     }catch{/* 切回窗口时仍会核对磁盘。 */}
-    panel.on('closed',()=>{clearTimeout(timer);watcher?.close();panel=null;});
-    panel.loadFile(path.join(__dirname,'library.html'));
+    win.on('closed',()=>{clearTimeout(timer);watcher?.close();if(panel===win)panel=null;});
+    presentWindow(win);
+    loadLibrary(win);
   }
-  ipcMain.on('inbox:library',e=>{if(fromPet(e))show();});
+  ipcMain.on('inbox:library',e=>{if(fromPet(e))show(BrowserWindow.fromWebContents(e.sender));});
   ipcMain.on('inbox:auto',(e,paths)=>{
     if(fromPet(e) && Array.isArray(paths) && paths.length && paths.every(p=>typeof p==='string' && path.isAbsolute(p)))
       queue({action:'drop',paths},BrowserWindow.fromWebContents(e.sender));

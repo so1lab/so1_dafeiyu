@@ -206,5 +206,21 @@ async function main(){
     }
   }
   console.log('PASS desktop: baseline, stability, one-time detection, new/existing rename, download completion, deletion, no recursion, hidden files, stop, visible-icon wait, task cancellation and unchanged file');
+  const analyze=require('../component/analyze.cjs');
+  let releaseSlow;
+  const results=[];
+  const host=(_method,_url,payload)=>JSON.parse(payload).name==='slow.txt'?
+    new Promise(resolve=>{releaseSlow=resolve;}):{body:JSON.stringify({ok:true,text:JSON.stringify({summary:'快速文件'})})};
+  for await(const item of analyze(['slow.txt','fast.txt','damaged.txt'],dir,async req=>{
+    if(req.file==='damaged.txt')throw Error('采样失败');
+    return {sig:'sample',body:'片段',localBody:'完整本地采样',candidates:[],categories:[]};
+  },host,35))results.push(item);
+  assert.equal(results.at(-1).file,'slow.txt');
+  assert(results.find(item=>item.file==='fast.txt')?.plan);
+  assert.equal(results.find(item=>item.file==='damaged.txt').sample,null);
+  assert.equal(results.at(-1).sample.body,'完整本地采样');
+  assert.equal(results.at(-1).plan,undefined);
+  releaseSlow({body:'{"ok":false}'});
+  console.log('PASS batch: fast files proceed, timed-out and failed samples fall back independently');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>fs.rmSync(dir,{recursive:true,force:true}));

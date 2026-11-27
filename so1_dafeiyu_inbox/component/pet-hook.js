@@ -5,6 +5,8 @@
     if(event.source===window && event.data?.type==='fish-life-fact')courier.send('inbox:life-fact',event.data.fact);
     if(event.source===window && event.data?.type==='fish-feed-recommendation')courier.send('inbox:feed-recommendation');
     if(event.source===window && event.data?.type==='fish-memory-cabin')courier.send('inbox:memory-open');
+    if(event.source===window && event.data?.type==='fish-open-warehouse')courier.send('inbox:library');
+    if(event.source===window && event.data?.type==='fish-life-settings')courier.send('inbox:life-settings-open');
   });
   let parcel;
   let timer;

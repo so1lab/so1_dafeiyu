@@ -1,6 +1,5 @@
 const {ipcRenderer,contextBridge}=require('electron');
 contextBridge.exposeInMainWorld('library',{
-  life:patch=>ipcRenderer.invoke('inbox:life',patch),
   move:(ids,folder)=>ipcRenderer.invoke('inbox:desk-move',ids,folder),
   undo:batch=>ipcRenderer.invoke('inbox:desk-undo',batch),
   thumb:(file,large=false)=>ipcRenderer.invoke('inbox:thumb',file,large),

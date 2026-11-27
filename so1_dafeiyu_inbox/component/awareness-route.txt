@@ -15,13 +15,19 @@
 			(!old?.notebook || old.notebook.key===keyValue || Date.now()-old.notebook.at>60000);
 		for(const ack of (notebookSync && Array.isArray(value.notebook.acks)?value.notebook.acks.slice(0,32):[])){
 			const item=Array.isArray(ack)?pending.get(ack[0]):null;
-			if(item){pending.delete(ack[0]);item.finish?.(ack[1]===true);}
+			if(item){
+				pending.delete(ack[0]);
+				item.finish?.(["recall","warehouse"].includes(item.kind)?ack[1]:ack[1]===true);
+			}
 		}
 		for(const [id,item] of pending)if(item.expires<Date.now())pending.delete(id);
 		const notebook=notebookSync && Array.isArray(value.notebook.entries)?
-			{key:keyValue,at:Date.now(),suggest:value.notebook.suggest===true,
+			{key:keyValue,at:Date.now(),suggest:value.notebook.suggest===true,hasMemories:value.notebook.hasMemories===true,
 			entries:value.notebook.entries.slice(0,40).filter(e=>e&&typeof e.text==="string"&&e.text.length<=180)}:old?.notebook;
-		store.set(value.petId,{current:value.current,previous:value.previous,events:[...rows.values()].slice(-2000),
+		const actions=Array.isArray(value.actions)?value.actions.slice(0,125).filter(row=>
+			row && typeof row.name==="string" && row.name.length<=80 && typeof row.scene==="string" && row.scene.length<=120 &&
+			["react","topic","request"].includes(row.dialogue)):old?.actions;
+		store.set(value.petId,{current:value.current,previous:value.previous,events:[...rows.values()].slice(-2000),actions,
 			at:Date.now(),observed:old?.observed || [],notebook,pending});
 		return okResult({ok:true,observed:old?.observed || [],memoryRequests:notebookSync?
 			[...pending.values()].map(({finish,...item})=>item):[]});

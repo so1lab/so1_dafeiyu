@@ -16,6 +16,7 @@ const source={chat:'你在对话中要求记住',panel:'你在记忆舱设置',m
 let data=null,tab='graph',selected='',currentStep=0,busy=false;
 const graphPageSize=48,zoomLevels=[100,125,160,200];
 let graphFocus='',graphPage=0,graphZoom=0;
+let manageLimit=100;
 let starYaw=0,starPitch=0,resetStarCamera=()=>{};
 const regions={
   memory:{label:'行为偏好',x:-239,y:-89,z:10},
@@ -417,7 +418,10 @@ function drawMemories(){
   const query=$('search').value.trim().toLocaleLowerCase(),box=$('memories');
   const list=data.memories.filter(row=>!query ||
     [row.summary,row.label,row.evidence,source[row.source]].some(v=>String(v||'').toLocaleLowerCase().includes(query)));
-  box.replaceChildren(...list.map(row=>recordCard(row,true)));
+  box.replaceChildren(...list.slice(0,manageLimit).map(row=>recordCard(row,true)));
+  if(list.length>manageLimit)box.append(button('显示更多（'+manageLimit+' / '+list.length+'）',()=>{
+    manageLimit+=100;drawMemories();
+  }));
   if(!list.length)box.append(el('p',query?'没有匹配的记忆。':'还没有长期记忆，可以先添加一条偏好。','hint'));
 }
 function render(){
@@ -493,8 +497,9 @@ function switchTab(next){
   render();
 }
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
+window.fishNotebook.onFocusGraph?.(()=>{if(tab!=='graph')switchTab('graph');});
 $('refresh').onclick=()=>load(data?.id);
-$('pets').onchange=()=>{selected='';currentStep=0;graphFocus='';graphPage=0;lastGraphDecisions=null;void load($('pets').value);};
+$('pets').onchange=()=>{selected='';currentStep=0;graphFocus='';graphPage=0;manageLimit=100;lastGraphDecisions=null;void load($('pets').value);};
 $('graphSearch').oninput=$('graphKind').onchange=()=>{graphPage=0;graphFocus='';render();};
 $('graphPrev').onclick=()=>{graphPage--;graphFocus='';render();};
 $('graphNext').onclick=()=>{graphPage++;graphFocus='';render();};
@@ -504,7 +509,7 @@ $('graphZoomReset').onclick=()=>setGraphZoom(0,true);
 $('graphResetView').onclick=()=>resetStarCamera();
 $('key').onchange=drawEditor;
 $('onlyToday').onchange=render;
-$('search').oninput=drawMemories;
+$('search').oninput=()=>{manageLimit=100;drawMemories();};
 $('suggest').onchange=()=>change({op:'suggestions',value:$('suggest').checked});
 $('preference').onsubmit=e=>{
   e.preventDefault();
