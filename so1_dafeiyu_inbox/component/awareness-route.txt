@@ -9,6 +9,20 @@
 		if(!old && value.since)return okResult({ok:false,needFull:true});
 		const rows=new Map((old?.events || []).map(e=>[e.id,e]));
 		for(const e of value.events)if(e && typeof e.id==="string" && typeof e.text==="string" && Number.isFinite(e.at))rows.set(e.id,e);
-		store.set(value.petId,{current:value.current,previous:value.previous,events:[...rows.values()].slice(-2000),at:Date.now(),observed:old?.observed || []});
-		return okResult({ok:true,observed:old?.observed || []});
+		const pending=old?.pending || new Map();
+		const keyValue=value.notebook?.key;
+		const notebookSync=typeof keyValue==="string" && /^[a-f0-9]{48}$/.test(keyValue) &&
+			(!old?.notebook || old.notebook.key===keyValue || Date.now()-old.notebook.at>60000);
+		for(const ack of (notebookSync && Array.isArray(value.notebook.acks)?value.notebook.acks.slice(0,32):[])){
+			const item=Array.isArray(ack)?pending.get(ack[0]):null;
+			if(item){pending.delete(ack[0]);item.finish?.(ack[1]===true);}
+		}
+		for(const [id,item] of pending)if(item.expires<Date.now())pending.delete(id);
+		const notebook=notebookSync && Array.isArray(value.notebook.entries)?
+			{key:keyValue,at:Date.now(),suggest:value.notebook.suggest===true,
+			entries:value.notebook.entries.slice(0,40).filter(e=>e&&typeof e.text==="string"&&e.text.length<=180)}:old?.notebook;
+		store.set(value.petId,{current:value.current,previous:value.previous,events:[...rows.values()].slice(-2000),
+			at:Date.now(),observed:old?.observed || [],notebook,pending});
+		return okResult({ok:true,observed:old?.observed || [],memoryRequests:notebookSync?
+			[...pending.values()].map(({finish,...item})=>item):[]});
 	}

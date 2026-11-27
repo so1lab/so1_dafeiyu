@@ -44,15 +44,16 @@ module.exports = function lifePulse(createLife, env, saved, walk) {
     const finish=(status,reason='',decision='重新安排')=>{
       if(!life.run || !['preparing','running','paused'].includes(life.run.status))return;
       life.run.status=status;life.run.endedAt=Date.now();
-      const details={runId:life.run.id,activity:life.run.activity,phase:life.run.phase,reason,decision,source:life.run.source};
+      const details={runId:life.run.id,episodeId:life.run.episodeId,clip:life.run.clip,activity:life.run.activity,phase:life.run.phase,reason,decision,source:life.run.source};
       if(status==='interrupted' && !['quiet','external'].includes(life.run.activity))life.previous={...details,at:Date.now()};
       life.fact('activity.'+status,details);
     };
     life.finish=finish;
     const request=(activity,clip,phase='',source='local')=>{
       const reason=source==='host'?'宿主或用户任务请求动作':life.planReason || '本地行为安排';
-      life.run={id:life.session+':run:'+(life.seq+1),activity,clip,phase,status:'preparing',requestedAt:Date.now(),source,reason};
-      life.fact('activity.requested',{runId:life.run.id,activity,phase,source,reason});
+      const episodeId=source==='host'?s.fishDesktopEpisodeId:undefined;
+      life.run={id:life.session+':run:'+(life.seq+1),activity,clip,phase,status:'preparing',requestedAt:Date.now(),source,reason,episodeId};
+      life.fact('activity.requested',{runId:life.run.id,episodeId,clip,activity,phase,source,reason});
     };
     const home=brain.state.home, area=env.area;
     if(home && area && env.enabled && !env.busy && !s.dragState.active && !s.frozen && !s.sleeping && s.moveRef===null) {
@@ -114,7 +115,7 @@ module.exports = function lifePulse(createLife, env, saved, walk) {
       }
       if(currentVideo(event.target) && !s.pending && ['preparing','paused'].includes(life.run.status)) {
         life.run.status='running';life.run.startedAt=Date.now();
-        life.fact('activity.started',{runId:life.run.id,activity:life.run.activity,phase:life.run.phase,source:life.run.source});
+        life.fact('activity.started',{runId:life.run.id,episodeId:life.run.episodeId,clip:life.run.clip,activity:life.run.activity,phase:life.run.phase,source:life.run.source});
       }
     };
     const ended=event=>{
@@ -198,7 +199,7 @@ module.exports = function lifePulse(createLife, env, saved, walk) {
     };
     const input = event => {
       if(!event.isTrusted || !event.target.closest?.('.pet-hit')) return;
-      if(s.fishDesktopVisitToken){s.fishDesktopVisitToken=null;s.stopMove();}
+      if(s.fishDesktopVisitToken){s.fishDesktopVisitToken=null;s.fishDesktopEpisodeId=null;s.stopMove();}
       life.lastInput=Date.now();
       if(event.type==='pointerdown'){life.homePending={...s.pos};life.pointer={...s.pos};life.fact('user.pointer_down');}
       else life.fact('user.file_hover');
@@ -254,9 +255,10 @@ module.exports = function lifePulse(createLife, env, saved, walk) {
   }
   if(!wasEnabled && env.enabled) { life.externalUntil=now+3000; life.brain.interrupt(now); }
   const interacting=s.dragState.active || s.menuOpen || s.chatOpen || s.todoOpen;
-  const external=s.frozen || s.sleeping || s.whisperOn || !!s.playback ||
-    s.moveRef!=null || s.throwRef!=null || s.posFollow!=null ||
-    (s.pet.workStatusEnabled!==false && s.workState && !['success','error'].includes(s.workState)) || now<life.externalUntil;
+  const working=!!(s.pet.workStatusEnabled!==false && s.workState && !['success','error'].includes(s.workState));
+  const physical=s.frozen || s.sleeping || s.whisperOn || !!s.playback ||
+    s.moveRef!=null || s.throwRef!=null || s.posFollow!=null;
+  const external=physical || working || now<life.externalUntil;
   // 用户拖动结束且位置稳定后记录；送件/生活移动绝不修改这个偏好。
   if(life.homePending && !interacting && !life.held && s.throwRef===null && s.moveRef===null && s.posFollow===null) {
     const p=s.pos, previous=life.previousPos;
@@ -288,5 +290,8 @@ module.exports = function lifePulse(createLife, env, saved, walk) {
   // 关闭生活层时不改宿主状态；保存数据不包含动画句柄、锁或积压任务。
   return {id:s.pet.id, ...plan, enabled:life.enabled, held:env.busy,
     phase:life.phase,clip:s.anim,home:life.brain.state.home,self:life.run || null,previous:life.previous || null,
-    session:life.session,seq:life.seq,events:life.events.slice(),backgroundReady:plan.planning.ready && !s.pet.fixedEnabled};
+    session:life.session,seq:life.seq,events:life.events.slice(),working,
+    stationaryReady:working && !env.busy && !interacting && !physical && !env.fullscreen &&
+      !env.quietMode && !env.suspended && env.visible && now-life.lastInput>2000,
+    backgroundReady:plan.planning.ready && !s.pet.fixedEnabled};
 };

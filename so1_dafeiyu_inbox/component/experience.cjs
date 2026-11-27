@@ -6,7 +6,7 @@ const types=new Set(['activity.requested','activity.started','activity.completed
   'user.pointer_down','user.clicked','user.dragged','user.file_hover','user.position_settled','user.opened_menu','user.opened_chat','user.opened_todo',
   'user.opened_warehouse','user.chatted','user.fed','user.corrected','user.undo','user.requested_resume','task.queued','task.started','task.file_filed','task.filed','task.failed',
   'task.delivery_completed','task.delivery_interrupted','environment.locked','environment.resumed','system.started',
-  'desktop.detected','desktop.reacted','desktop.target','desktop.arrived','desktop.cancelled']);
+  'desktop.detected','desktop.reacted','desktop.target','desktop.arrived','desktop.dialogue','desktop.stationary','desktop.cancelled']);
 const text=(value,n=100)=>typeof value==='string'?value.replace(/[\u0000-\u001f]/g,' ').slice(0,n):'';
 function describe(e) {
   const d=e.details,a=names[d.activity] || '活动';
@@ -22,6 +22,8 @@ function describe(e) {
   if(e.type==='desktop.reacted')return '已用动作回应桌面新文件：'+d.name+'；等待图标可见后再靠近';
   if(e.type==='desktop.target')return '准备靠近桌面文件：'+d.name;
   if(e.type==='desktop.arrived')return '已走到桌面文件旁边：'+d.name+'；文件仍在原位置';
+  if(e.type==='desktop.stationary')return '在原地回应了桌面新文件';
+  if(e.type==='desktop.dialogue')return '展示了桌面观察台词';
   if(e.type==='desktop.cancelled')return '靠近桌面文件的动作已取消：'+(d.reason || '用户操作或目标变化');
   if(e.type==='task.started')return '开始处理文件，尚未确认成功';
   if(e.type==='task.queued')return '文件已排队，尚未开始处理';
@@ -58,7 +60,7 @@ module.exports=function experience(data) {
   function append(raw) {
     if(!raw || !types.has(raw.type) || typeof raw.id!=='string' || raw.id.length>200 || ids.has(raw.id))return false;
     const d=raw.details || {},details={};
-    for(const key of ['runId','activity','phase','reason','decision','direction','batch','interruptedBy','source','name'])if(d[key])details[key]=text(d[key]);
+    for(const key of ['runId','episodeId','activity','phase','reason','decision','direction','batch','interruptedBy','source','name','clip','line'])if(d[key])details[key]=text(d[key]);
     if(d.path)details.path=text(d.path,1000);
     for(const key of ['x','y'])if(Number.isFinite(d[key]))details[key]=d[key];
     if(Number.isSafeInteger(d.count)&&d.count>=0)details.count=Math.min(d.count,10000);
@@ -75,7 +77,7 @@ module.exports=function experience(data) {
   // 进程退出前未确认的活动只能标记中断，不能当作已完成或重放。
   for(const [petId,current] of self)if(['running','preparing','paused'].includes(current.status))
     record(petId,'activity.interrupted',{...current,reason:'应用重启，后续执行未确认',decision:'重新安排'});
-  return {append,record,since(petId,id){const rows=facts.filter(e=>e.petId===petId),index=rows.findIndex(e=>e.id===id);return index<0?rows:rows.slice(index+1);},view(petId,query='') {
+  return {append,record,timeline:petId=>facts.filter(e=>e.petId===petId),since(petId,id){const rows=facts.filter(e=>e.petId===petId),index=rows.findIndex(e=>e.id===id);return index<0?rows:rows.slice(index+1);},view(petId,query='') {
     const rows=facts.filter(e=>e.petId===petId),terms=String(query).match(/[\u3400-\u9fff]{2}|[a-zA-Z]{3,}/g) || [];
     const relevant=query?rows.filter(e=>terms.some(t=>e.text.includes(t) || JSON.stringify(e.details).includes(t))).slice(-12):[];
     return {current:self.get(petId) || null,previous:previous.get(petId) || null,recent:rows.slice(-24),relevant};

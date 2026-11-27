@@ -68,6 +68,22 @@ async function main(){
   let answer=await fn(deps,{method:'POST',rest:'life-plan',body:JSON.stringify({eligible})});
   assert(answer.ok);assert.equal(options.provider,'deepseek-official');assert.equal(options.model,'deepseek-flash');
   assert(options.signal instanceof AbortSignal);assert.equal(options.reasoningEffort,'off');
+  // 桌面台词沿用当前桌宠的人设，模型输入只包含文件摘要所需的资料。
+  const pet={id:'second',whisperPrompt:'你喜欢拿自己开涮。'};
+  deps.configPaths=[pet];
+  Object.assign(context,{
+    readAllConfig:paths=>paths,
+    findPetInstance:(pets,id)=>({pet:pets.find(entry=>entry.id===id)}),
+    petPersona:(_conf,entry)=>entry.whisperPrompt,
+    generateWith:async (_deps,_llm,_selected,request)=>{
+      assert(request.system.startsWith(pet.whisperPrompt));
+      assert.deepEqual(JSON.parse(request.instruction),{name:'活动排班.txt',excerpt:'周六值班'});
+      return {ok:true};
+    }
+  });
+  answer=await fn(deps,{method:'POST',rest:'desktop-dialogue',
+    body:JSON.stringify({petId:pet.id,name:'活动排班.txt',excerpt:'周六值班'})});
+  assert(answer.ok);
   llm.stream=async function*(){throw Error('network');};
   answer=await fn(deps,{method:'POST',rest:'life-plan',body:'{}'});assert.equal(answer.reason,'model-request-failed');
   console.log('PASS planner: schema, candidate limits, cadence, async single-flight, stale rejection, timeout, fallback, stage execution and real host route');

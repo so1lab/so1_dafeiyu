@@ -4,6 +4,7 @@
   window.addEventListener('message',event=>{
     if(event.source===window && event.data?.type==='fish-life-fact')courier.send('inbox:life-fact',event.data.fact);
     if(event.source===window && event.data?.type==='fish-feed-recommendation')courier.send('inbox:feed-recommendation');
+    if(event.source===window && event.data?.type==='fish-memory-cabin')courier.send('inbox:memory-open');
   });
   let parcel;
   let timer;

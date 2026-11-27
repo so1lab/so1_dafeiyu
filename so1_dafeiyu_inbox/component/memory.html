@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' file:; media-src file: 'self'">
+  <title>大肥鱼的记忆舱</title>
+  <link rel="stylesheet" href="memory.css">
+  <script defer src="memory-ui.js"></script>
+</head>
+<body>
+  <header>
+    <div class="brand"><img src="dafeiyu-default.png" alt=""><h1>大肥鱼的记忆舱</h1></div>
+    <div class="controls"><label id="petLabel" hidden>桌宠 <select id="pets"></select></label><button id="refresh">刷新</button></div>
+  </header>
+  <nav aria-label="记忆舱视图">
+    <button data-tab="graph" aria-pressed="true">记忆星图</button>
+    <button data-tab="today" aria-pressed="false">经历回放</button>
+    <button data-tab="manage" aria-pressed="false">偏好与记忆</button>
+  </nav>
+  <p id="message" role="status">正在读取记忆舱…</p>
+  <main>
+    <section id="today" class="columns" hidden>
+      <aside>
+        <h2>最近经历</h2>
+        <label class="choice"><input id="onlyToday" type="checkbox" checked> 只看今天</label>
+        <div id="episodes"></div>
+      </aside>
+      <article id="episode" aria-live="polite"></article>
+    </section>
+    <section id="graph">
+      <div class="graph-toolbar">
+        <div class="graph-filters">
+          <input id="graphSearch" type="search" aria-label="搜索星图" placeholder="搜索记忆或经历">
+          <select id="graphKind" aria-label="星图类型">
+            <option value="all">全部</option><option value="memory">长期记忆</option><option value="episode">共同经历</option>
+            <option value="file">仓库文件</option><option value="action">动作档案</option>
+          </select>
+        </div>
+        <div class="graph-tools">
+          <button id="graphZoomOut" type="button" aria-label="缩小星图">−</button>
+          <button id="graphZoomReset" type="button" aria-label="重置缩放">100%</button>
+          <button id="graphZoomIn" type="button" aria-label="放大星图">＋</button>
+          <button id="graphResetView" type="button">复位视角</button>
+        </div>
+      </div>
+      <div class="graph-layout">
+        <div class="graph-main">
+          <div class="graph-stage">
+            <div id="constellation" aria-label="全局记忆星图"></div>
+            <p id="graphEmpty" class="graph-empty" hidden></p>
+            <span class="graph-drag-hint">拖动旋转 · 滚轮缩放</span>
+          </div>
+          <footer class="graph-footer">
+            <div class="graph-legend"><span class="legend-memory">行为偏好</span><span class="legend-chat">沟通记忆</span><span class="legend-episode">共同经历</span><span class="legend-file">仓库文件</span><span class="legend-action">动作档案</span></div>
+            <div class="graph-pages"><p id="graphCount" role="status"></p><button id="graphPrev" type="button" aria-label="上一页">‹</button><button id="graphNext" type="button" aria-label="下一页">›</button></div>
+          </footer>
+        </div>
+        <aside id="graphDetail" aria-label="记忆动态与节点详情"></aside>
+      </div>
+    </section>
+    <section id="manage" class="columns" hidden>
+      <aside>
+        <h2>添加或更新偏好</h2>
+        <form id="preference">
+          <label>偏好类型<select id="key">
+            <option value="work_move">工作时的走动</option><option value="quiet_hours">安静时段</option>
+            <option value="disdain">嫌弃脸频率</option><option value="persona">性格设定</option><option value="note">沟通重点</option>
+          </select></label>
+          <div id="editor"></div>
+          <button class="primary" type="submit">保存记忆</button>
+        </form>
+        <p class="hint">也可以在对话里说「记住，工作时别跑来跑去」。工作场景以 dsh 工作状态为准，安静时段约束桌面观察台词。</p>
+        <label class="choice"><input type="checkbox" id="suggest"> 用 DeepSeek 提议沟通重点</label>
+        <p class="hint">开启后，少量对话文字会用于提炼建议。确认后才会进入长期记忆。</p>
+      </aside>
+      <article>
+        <h2>已记录的记忆</h2>
+        <label class="search">查找记忆 <input id="search" type="search" placeholder="偏好、来源或沟通重点"></label>
+        <div id="memories"></div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

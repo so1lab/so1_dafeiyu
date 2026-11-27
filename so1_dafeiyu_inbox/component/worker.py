@@ -327,6 +327,10 @@ if __name__ == "__main__":
         print(json.dumps({"excerpt": excerpt}), flush=True)
         sys.exit(0)
     root = Path(sys.argv[1]).resolve()
+    if req["action"] == "warehouse_memory":
+        from warehouse_memory import snapshot
+        print(json.dumps({"files": snapshot(root, Path(sys.argv[2]))}), flush=True)
+        sys.exit(0)
     root.mkdir(parents=True, exist_ok=True)
     with contextlib.closing(sqlite3.connect(sys.argv[2])) as db:
         db.execute("create table if not exists indexed(item integer primary key,stamp text)")

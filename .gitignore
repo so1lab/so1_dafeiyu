@@ -1,0 +1,10 @@
+# Local desk pet state and personal warehouse exports
+file-inbox/
+大肥鱼仓库/
+大肥鱼仓库记忆目录/
+warehouse-memory.json
+仓库记忆目录.md
+experiences.jsonl*
+life-state.json
+*.sqlite
+*.sqlite-*

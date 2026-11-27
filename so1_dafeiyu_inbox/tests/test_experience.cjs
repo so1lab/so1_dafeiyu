@@ -38,6 +38,10 @@ h.a.emit('ended');h.s.handleEnded();h.a.emit('playing');
 const snapshot=h.tick(40000);assert.equal(snapshot.self.activity,'quiet');
 assert(snapshot.events.some(e=>e.type==='activity.completed' && e.details.runId===observe));
 assert.equal(snapshot.activity,'observe','planned state can differ; self must report actual quiet pose');
+let work=harness();work.s.pet.workStatusEnabled=true;work.s.workState='running';
+const working=work.tick(5000);
+assert(working.working && working.stationaryReady && !working.backgroundReady);
+assert.equal(work.tick(6000,{fullscreen:true}).stationaryReady,false);
 // 用户按下、拖动及放置保留明确原因；没有旧位移回写。
 h.s.fishLife.start('play');h.a.emit('playing');
 h.listeners.get('pointerdown')(h.trusted('pointerdown'));

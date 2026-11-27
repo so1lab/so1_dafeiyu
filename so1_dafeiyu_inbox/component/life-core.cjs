@@ -62,14 +62,15 @@ module.exports = function createLife(saved = {}, random = Math.random) {
         select('quiet', reason, 35 + random() * 25, now);
       } else if (now >= until) {
         const night = env.hour >= 23 || env.hour < 7;
+        const persona=env.persona;
         const candidates = [
-          ['observe', '看看周围有什么变化', 8, 20 + state.curiosity, 150],
+          ['observe', '看看周围有什么变化', 8, 20 + state.curiosity + (persona==='curious'?12:0), 150],
           ['stretch', '舒展一下，继续陪你', 10, 25 + (100-state.energy)*.4, 240],
-          ['play', '你暂时没操作，我自己玩一小会儿', 14, env.idle >= 120 ? 65 : 0, 300],
+          ['play', '你暂时没操作，我自己玩一小会儿', 14, env.idle >= 120 ? (persona==='playful'?95:65) : 0, 300],
           ['stroll', '去旁边慢慢溜达一下', 12, env.idle >= 90 && env.canStroll ? 60 : 0, 300],
           ['rest', '忙了一阵，原地歇一会儿', 70, state.energy < 65 ? 90 : 15, 180],
           ['nap', '这里很安静，打个盹', 180, env.idle >= 300 ? 60 + state.sleepiness + (night?30:0) : 0, 600],
-        ].filter(([id,,,weight,cd]) => weight > 0 && env.available?.includes(id) &&
+        ].filter(([id,,,weight,cd]) => weight > 0 && env.available?.includes(id) && (persona!=='calm' || id!=='stroll') &&
           id !== last && now - (cooldown[id] ?? -Infinity) >= cd*1000);
         let proposed=pendingPlan?.steps[0];
         // 同一份实时约束同时检查模型计划和本地选择，计划不能越过冷却或用户状态。

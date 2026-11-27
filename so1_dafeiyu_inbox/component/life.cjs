@@ -15,6 +15,10 @@ module.exports = function startLife({pets, data, config, save, host}) {
   const holds=new Map(),running=new Set(),latest=new Map(),background=new Map();
   let desktop=null;
   const memory=require('./experience.cjs')(data),acks=new Map(),published=new Map();
+  let notebook=null;
+  try{notebook=require('./pet-memory.cjs')(data);}
+  catch(e){console.warn('[fish-memory] 本地记忆库不可用',e.message);}
+  const memoryAcks=new Map(),suggestions=new Map();
   let publishing=false,publishAgain=false,lastPublish=0;
   const petId=pet=>latest.get(pet)?.id || [...pets.entries()].find(([,p])=>p===pet)?.[0] || (pets.size===1?'main':null);
   function record(pet,type,details={}) {
@@ -37,16 +41,51 @@ module.exports = function startLife({pets, data, config, save, host}) {
         const events=memory.since(id,published.get(id)),since=published.get(id);
         // 完整路径只留在本机日志/面板，发送给聊天的事实移除 path 字段。
         const shared=value=>Array.isArray(value)?value.map(shared):value&&typeof value==='object'?
-          Object.fromEntries(Object.entries(value).filter(([key])=>key!=='path').map(([key,v])=>[key,shared(v)])):value;
-        const reply=await host('POST','/dsh-pet-7340/life-awareness',JSON.stringify(shared({petId:id,...view,events,since})));
+          Object.fromEntries(Object.entries(value).filter(([key])=>key!=='path' && key!=='line').map(([key,v])=>[key,shared(v)])):value;
+        const reply=await host('POST','/dsh-pet-7340/life-awareness',JSON.stringify(shared({petId:id,...view,events,since,
+          notebook:notebook?{key:notebook.bridgeKey,entries:notebook.chatContext(id),suggest:config.memorySuggestions===true,
+            acks:[...(memoryAcks.get(id)||new Map()).entries()]}:null})));
         const result=JSON.parse(reply.body);
         for(const fact of result.observed || [])memory.append(fact);
+        for(const request of (result.memoryRequests || []).slice(0,8))handleMemoryRequest(id,request);
         if(result.needFull){published.delete(id);publishAgain=true;}
         else if(result.ok && events.length)published.set(id,events.at(-1).id);
       }
       lastPublish=Date.now();
     } catch(e) { log(e); }
     finally {publishing=false;if(publishAgain){publishAgain=false;void publish();}}
+  }
+  function handleMemoryRequest(id,request){
+    if(!notebook || !request || typeof request.id!=='string' || request.id.length>80 ||
+      !Number.isFinite(request.expires) || request.expires<Date.now())return;
+    if(!memoryAcks.has(id))memoryAcks.set(id,new Map());
+    const receipts=memoryAcks.get(id);
+    if(receipts.has(request.id))return;
+    const ack=ok=>{
+      receipts.set(request.id,ok);
+      if(receipts.size>32)receipts.delete(receipts.keys().next().value);
+    };
+    if(request.kind==='write'){
+      try{
+        notebook.insert(id,request.key,request.value,{source:'chat',evidence:request.text,requestId:request.id});
+        ack(true);publishAgain=true;refresh();
+      }catch{ack(false);publishAgain=true;}
+    } else if(request.kind==='suggest'){
+      ack(true);
+      const last=suggestions.get(id)||0;
+      if(config.memorySuggestions!==true || Date.now()-last<60000 || typeof request.text!=='string')return;
+      suggestions.set(id,Date.now());
+      void Promise.resolve().then(()=>host('POST','/dsh-pet-7340/life-memory-suggest',JSON.stringify({
+        petId:id,key:notebook.bridgeKey,text:request.text.slice(0,420)
+      }))).then(response=>{
+        const reply=JSON.parse(response.body);
+        if(!disposed && config.memorySuggestions===true && reply.ok && typeof reply.text==='string'){
+          const text=reply.text.trim();
+          if(text && text!=='无' && text.length<=80 && !/[\r\n]/.test(text))
+            notebook.insert(id,'note',text,{source:'model',suggestion:true,evidence:'来自 '+new Date(request.at || Date.now()).toLocaleString('zh-CN')+' 的对话',requestId:request.id});
+        }
+      }).catch(()=>{});
+    }
   }
   const planner=require('./life-planner.cjs')({host});
   let suspended=false, disposed=false, foreground=null, sensor=null, lastSave=0, timer;
@@ -88,7 +127,7 @@ module.exports = function startLife({pets, data, config, save, host}) {
         enabled:config.lifeEnabled!==false, aiEnabled:config.lifeAI!==false,visible:pet.isVisible(), area:work,
         foregroundOverlap:!fresh || (!!fg && !foreground.desktop && foreground.pid!==process.pid &&
           center.x>fg.x && center.x<fg.x+fg.width && center.y>fg.y && center.y<fg.y+fg.height),
-        defaultAssets:true,availableClips,ack:acks.get(pet)};
+        defaultAssets:true,availableClips,persona:notebook?.policy(petId(pet)).persona,ack:acks.get(pet)};
       const result=await pet.webContents.executeJavaScript(
         '('+pulse.toString()+')('+core.toString()+','+JSON.stringify(env)+','+JSON.stringify(saved)+','+JSON.stringify(walk)+')');
       if(result && !disposed) {
@@ -169,16 +208,80 @@ module.exports = function startLife({pets, data, config, save, host}) {
     powerMonitor.removeListener('suspend',suspend); powerMonitor.removeListener('lock-screen',suspend);
     powerMonitor.removeListener('resume',resume); powerMonitor.removeListener('unlock-screen',resume);
     app.removeListener('before-quit',dispose); holds.clear(); latest.clear();
+    notebook?.close();
   }
   timer=setInterval(()=>{
     for(const p of latest.keys())if(p.isDestroyed()){latest.delete(p);holds.delete(p);planner.forget(p);}
     refresh();
   },2000);
   timer.unref(); app.once('before-quit',dispose); refresh();
-  const canBackground=pet=>!disposed && !holds.get(pet)?.size && !!latest.get(pet)?.backgroundReady;
-  return {acquire,status,settings,dispose,refresh,complete,record,ingest,canBackground,attachDesktop:value=>desktop=value,
-    acquireBackground(pet,cancel){
-      if(!canBackground(pet))return null;
+  const canBackground=(pet,stationary=false)=>!disposed && !holds.get(pet)?.size &&
+    !!latest.get(pet)?.[stationary?'stationaryReady':'backgroundReady'];
+  function memoryPolicy(pet){
+    return notebook?.policy(petId(pet),{working:latest.get(pet)?.working===true}) || {};
+  }
+  function rememberDecision(pet,episode,action,ids){
+    const id=petId(pet);
+    if(!notebook || !id)return;
+    setImmediate(()=>{if(!disposed)try{notebook.decide(id,episode,action,ids);}catch(e){log(e);}});
+  }
+  function memoryView(id){
+    const ids=[...pets.values()].filter(p=>!p.isDestroyed()).map(petId).filter(Boolean);
+    id=ids.includes(id)?id:ids[0];
+    if(!id || !notebook)return {ids,available:false};
+    const timeline=memory.timeline(id);
+    const milestones=['user.dragged','user.position_settled','user.fed','user.corrected','user.undo',
+      'user.requested_resume','task.filed','task.failed','task.delivery_interrupted','task.delivery_completed'];
+    const recent=timeline.filter(e=>e.details.episodeId || e.details.batch || milestones.includes(e.type) ||
+      (['activity.started','activity.completed','activity.interrupted','activity.failed'].includes(e.type) &&
+        e.details.activity && !['quiet','external'].includes(e.details.activity))).slice(-360);
+    const byClip=new Map();
+    if(id==='main')for(const row of require('./action-catalog.json').actions){
+      if(availableClips.includes(row.name))byClip.set(row.name,{...row,preview:true,runs:0});
+    }
+    const started=new Set(),lastRun=new Map();
+    for(const event of timeline){
+      const {clip,runId}=event.details;
+      if(!clip || !runId)continue;
+      const key=JSON.stringify([runId,clip]);
+      if(event.type==='activity.started' && !started.has(key)){
+        started.add(key);
+        lastRun.set(clip,key);
+        if(!byClip.has(clip))byClip.set(clip,{name:clip,runs:0});
+        const action=byClip.get(clip);
+        action.runs++;
+        action.lastAt=event.at;
+        action.lastStatus='播放开始';
+        delete action.lastReason;
+      }
+      const action=byClip.get(clip);
+      const outcome={'activity.completed':'完成','activity.interrupted':'中断','activity.failed':'失败'}[event.type];
+      if(outcome && action && lastRun.get(clip)===key){
+        action.lastStatus=outcome;
+        action.lastReason=event.details.reason;
+      }
+    }
+    return {ids,id,available:true,now:Date.now(),suggest:config.memorySuggestions===true,
+      actions:[...byClip.values()],
+      timeline:recent.map(({id,at,type,text,details})=>({id,at,type,text,details:{
+        episodeId:details.episodeId,runId:details.runId,batch:details.batch,clip:details.clip,name:details.name,line:details.line}})),
+      ...notebook.snapshot(id,[...new Set(recent.map(e=>e.details.episodeId).filter(Boolean))])};
+  }
+  function memoryChange(id,request){
+    if(!notebook || ![...pets.values()].some(p=>!p.isDestroyed() && petId(p)===id))throw Error('记忆库暂不可用');
+    if(request.op==='save')notebook.insert(id,request.key,request.value,{evidence:'记忆舱手动设置'});
+    else if(request.op==='confirm')notebook.confirm(id,request.id);
+    else if(request.op==='forget')notebook.forget(id,request.id);
+    else if(request.op==='suggestions' && typeof request.value==='boolean'){config.memorySuggestions=request.value;save();}
+    else throw Error('无法识别记忆操作');
+    refresh();void publish();return memoryView(id);
+  }
+  return {acquire,status,settings,dispose,refresh,complete,record,ingest,canBackground,memoryView,memoryChange,memoryPolicy,rememberDecision,
+    recentDisdain:pet=>memory.timeline(petId(pet)).some(e=>e.type==='activity.started' && e.details.episodeId &&
+      e.details.activity==='disdain_file' && Date.now()-e.at<30*60000),
+    attachDesktop:value=>desktop=value,
+    acquireBackground(pet,cancel,stationary=false){
+      if(!canBackground(pet,stationary))return null;
       const release=acquire(pet,true),entry={cancel};background.set(pet,entry);
       return ()=>{if(background.get(pet)===entry)background.delete(pet);release();};
     }};

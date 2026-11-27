@@ -45,9 +45,10 @@ async function main(){
 
   function controllerHarness() {
     let foundCallback,point=null,resolveMove,cancelTask,clock=Date.now();const records=[],timers=[],scripts=[],messages=[];let released=0,visits=0,reactions=0;
-    let reaction,lookups=0;
+    let reaction,lookups=0,policy={};
     const pet={isDestroyed:()=>false,isVisible:()=>true,webContents:{executeJavaScript:async code=>scripts.push(code)}};
     const life={canBackground:()=>true,record:(_p,type,details)=>records.push({type,details}),
+      memoryPolicy:()=>policy,rememberDecision:(_p,episode,action,ids)=>records.push({type:'decision',details:{episode,action,ids}}),
       acquireBackground:(_p,cancel)=>{cancelTask=cancel;return ()=>released++;}};
     const archive={locate:async file=>{lookups++;return typeof point==='function'?point(file):point;},
       reactToFile:async()=>{reactions++;await reaction;},visitFile:async()=>{visits++;return new Promise(r=>resolveMove=r);}};
@@ -61,7 +62,7 @@ async function main(){
     controller.setEnabled(true);
     return {controller,records,scripts,messages,emit:row=>foundCallback([row]),point:p=>point=p,finish:()=>resolveMove?.({x:200,y:200}),
       cancel:()=>cancelTask?.(),pump:(advance=0)=>{clock+=advance;timers[0]();},visits:()=>visits,reactions:()=>reactions,released:()=>released,
-      lookups:()=>lookups,holdReaction:()=>{let finish;reaction=new Promise(r=>finish=r);return finish;}};
+      lookups:()=>lookups,policy:p=>policy=p,holdReaction:()=>{let finish;reaction=new Promise(r=>finish=r);return finish;}};
   }
   const row={path:file,name:'new.txt',size:fs.statSync(file).size},before=fs.readFileSync(file);
   let h=controllerHarness();h.emit(row);await wait(5);
@@ -100,6 +101,13 @@ async function main(){
   assert(h.records.some(e=>e.type==='desktop.arrived'&&e.details.name===second.name));
   assert.equal(h.controller.status().queued,1);
   h.controller.dispose();
+  h=controllerHarness();h.policy({stationary:'saved-work-rule'});h.emit(row);await wait(5);
+  assert.equal(h.controller.status().phase,'observed');
+  assert.equal(h.lookups(),0);assert.equal(h.visits(),0);
+  assert.equal(h.reactions(),1);
+  const stationaryEvent=h.records.find(row=>row.type==='desktop.stationary');
+  assert(h.records.some(e=>e.type==='decision'&&e.details.episode===stationaryEvent.details.episodeId&&e.details.ids[0]==='saved-work-rule'));
+  h.controller.dispose();
   const stat=fs.statSync(file);
   const fixture={peek:'咦，这是一份排班表！',reaction:'啧，周末还要排班呀。'};
   let dialogueCalls=0;
@@ -127,8 +135,11 @@ async function main(){
     vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../component/archive.cjs'),'utf8'),context);
     const pet={isDestroyed:()=>false,isVisible:()=>true,getNativeWindowHandle:()=>Buffer.alloc(8),getContentBounds:()=>({x:0,y:0}),
       webContents:{getZoomFactor:()=>1,async executeJavaScript(code){
+        if(code.includes('fishDesktopVisitToken=id;')){
+          claims++;if(mode==='cancel-before-walk'&&claims===2)alive=false;
+          return true;
+        }
         if(code.startsWith('(function(id)')){
-          if(code.includes('fishDesktopVisitToken=id;return true;')){claims++;if(mode==='cancel-before-walk'&&claims===2)alive=false;}
           return true;
         }
         if(code.startsWith('(function noticeFile')){

@@ -41,7 +41,7 @@ module.exports = function startInbox(pets,host) {
       const python = JSON.parse(fs.readFileSync(path.join(__dirname,'runtime.json'))).python;
       const child = spawn(python,['-X','utf8',path.join(__dirname,'worker.py'),target,path.join(data,'history.sqlite')],
         {windowsHide:true,stdio:['pipe','pipe','pipe']});
-      const timer=req.action==='desktop_excerpt'?setTimeout(()=>child.kill(),3500):null;
+      const timer=['desktop_excerpt','warehouse_memory'].includes(req.action)?setTimeout(()=>child.kill(),3500):null;
       let result, errorText = '';
       child.on('error',reject);
       child.stdin.on('error',reject);
@@ -78,6 +78,7 @@ module.exports = function startInbox(pets,host) {
   const senderPet=e=>[...pets.values()].find(p=>!p.isDestroyed() && p.webContents===e.sender && e.senderFrame===e.sender.mainFrame);
   const showRecommendation=require('./feed.cjs')(pets);
   ipcMain.on('inbox:feed-recommendation',e=>{if(senderPet(e))showRecommendation();});
+  require('./memory-panel.cjs')({life,senderPet,warehouse:()=>runWorker({action:'warehouse_memory'},root())});
   ipcMain.on('inbox:life-fact',(e,fact)=>{const pet=senderPet(e);if(pet)try{life.ingest(pet,fact);}catch(err){console.warn('[fish-life] 经历未能写盘',err.message);}});
   ipcMain.on('inbox:mouth-pose',(e,stage)=>{
     const pet=senderPet(e);
@@ -129,15 +130,15 @@ module.exports = function startInbox(pets,host) {
   async function performArchive(pet,groups,allFiled,journey={}) {
     let done=false;
     try{done=await require('./archive.cjs')(pet,groups,arrived,allFiled,journey);}
-    finally{life.record(pet,done===true?'task.delivery_completed':'task.delivery_interrupted');}
+    finally{life.record(pet,done===true?'task.delivery_completed':'task.delivery_interrupted',{batch:journey.batch});}
   }
-  function animate(pet,groups,allFiled=true){
+  function animate(pet,groups,allFiled=true,batch){
     pet=pet || pets.values().next().value;
     const releaseLife=life.acquire(pet);
     animationTail=animationTail.then(async()=>{
       if(!pet || pet.isDestroyed())return;
       walking.add(pet);
-      try{await performArchive(pet,groups,allFiled);}finally{walking.delete(pet);}
+      try{await performArchive(pet,groups,allFiled,{batch});}finally{walking.delete(pet);}
     })
       .catch(e=>console.warn('[inbox] 动画中断',e.message)).finally(releaseLife);
     return animationTail;
@@ -167,7 +168,7 @@ module.exports = function startInbox(pets,host) {
           walking.add(pet);
           const batch=await destination;
           if(batch.groups.length && !pet.isDestroyed())
-            await performArchive(pet,batch.groups,batch.complete,{locator,opened});
+            await performArchive(pet,batch.groups,batch.complete,{locator,opened,batch:batchId});
         }finally{
           walking.delete(pet);locator.cancel();
           const batch=await destination;
@@ -214,7 +215,7 @@ module.exports = function startInbox(pets,host) {
           delivering = true;
           classified=true;
           if(finishJourney)finishJourney({groups:[...groups.values()],complete:success===paths.length});
-          else animate(pet,[...groups.values()],success===paths.length);
+          else animate(pet,[...groups.values()],success===paths.length,batch);
         }
         if(failed.length && pet && !pet.isDestroyed()){
           failures.set(pet,failed);result.message=failed.length+' 份未能收纳，请核对原位置';

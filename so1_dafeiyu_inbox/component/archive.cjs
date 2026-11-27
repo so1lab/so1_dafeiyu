@@ -54,14 +54,16 @@ function celebrate(clip, timeoutMs){
   });
 }
 function noticeFile(clip,timeoutMs,id,speech=null){
-  const s=sprites[0];s.stopMove();s.stopThrow();s.playOnce(clip);
+  const s=sprites[0];s.stopMove();s.stopThrow();
   const video=s.front===0?s.videoB:s.videoA;
+  s.playOnce(clip);
   return new Promise(resolve=>{
     let frame=null,done=false,spoken=false;
     const finish=value=>{if(done)return;done=true;clearTimeout(timer);if(frame!==null)cancelAnimationFrame(frame);resolve(value);};
     const timer=setTimeout(()=>finish(false),timeoutMs);
     const guard=()=>{
-      if(s.fishDesktopVisitToken!==id || s.dragState.active || s.frozen || s.sleeping || s.menuOpen || s.chatOpen || s.pet.fixedEnabled){
+      if(s.fishDesktopVisitToken!==id || s.dragState.active || s.frozen || s.sleeping || s.menuOpen || s.chatOpen ||
+        s.todoOpen || s.pet.fixedEnabled || s.fishLife?.env.suspended || s.fishLife?.env.fullscreen){
         video.pause();finish(false);return;
       }
       // 只在对应姿势的播放窗口内消费本次任务的台词，迟到的回复不会挡住下一段。
@@ -71,6 +73,7 @@ function noticeFile(clip,timeoutMs,id,speech=null){
         !video.paused && !video.ended && elapsed>=speech.from && elapsed<=speech.until){
         spoken=true;
         s.showWhisper(line,undefined,undefined,4800,false);
+        if(s.fishDesktopEpisodeId)s.fishLife?.fact('desktop.dialogue',{episodeId:s.fishDesktopEpisodeId,clip,line});
       }
       frame=requestAnimationFrame(guard);
     };
@@ -270,15 +273,19 @@ module.exports=async function archive(pet,groups,onArrive,allFiled=true,journey=
 module.exports.locate=locate;
 // 发现动作不依赖桌面图标是否可见。这样即使文件暂时被窗口遮住，
 // 大肥鱼也会先对“新文件出现”作出反应，靠近和偷看则等待图标可见。
-module.exports.reactToFile=async function(pet,{token,alive=()=>true}) {
+module.exports.reactToFile=async function(pet,{token,alive=()=>true,episodeId=null,stationary=false}) {
   const valid=()=>alive() && !pet.isDestroyed() && pet.isVisible();
   if(!valid())throw Error('发现文件动作已取消');
-  const accepted=await evaluate(pet,function(id){
+  const accepted=await evaluate(pet,function(id,episode,local){
     const s=sprites[0];
+    const safeAtWork=local && s?.workState && !['success','error'].includes(s.workState) &&
+      Date.now()-(s.fishLife?.lastInput || 0)>2000;
     if(!s || s.dragState.active || s.frozen || s.sleeping || s.menuOpen || s.chatOpen || s.pet.fixedEnabled ||
-      s.throwRef!=null || s.moveRef!=null || s.posFollow!=null || (s.fishLife?.externalUntil || 0)>Date.now())return false;
-    s.fishDesktopVisitToken=id;return true;
-  },token);
+      s.fishLife?.env.suspended || s.fishLife?.env.fullscreen ||
+      s.todoOpen || s.whisperOn || s.playback || s.throwRef!=null || s.moveRef!=null || s.posFollow!=null ||
+      (local && !safeAtWork) || ((s.fishLife?.externalUntil || 0)>Date.now() && !safeAtWork))return false;
+    s.fishDesktopVisitToken=id;s.fishDesktopEpisodeId=episode;return true;
+  },token,episodeId,stationary);
   if(!accepted)throw Error('桌宠正在处理其它操作');
   try {
     if(!valid())throw Error('发现文件动作已取消');
@@ -286,24 +293,24 @@ module.exports.reactToFile=async function(pet,{token,alive=()=>true}) {
     if(!noticed || !valid())throw Error('发现文件动作未完整播放');
   } finally {
     if(!pet.isDestroyed())await evaluate(pet,function(id){
-      const s=sprites[0];if(s.fishDesktopVisitToken===id)s.fishDesktopVisitToken=null;
+      const s=sprites[0];if(s.fishDesktopVisitToken===id){s.fishDesktopVisitToken=null;s.fishDesktopEpisodeId=null;}
     },token).catch(()=>{});
   }
 };
 // 新文件观察只查询桌面，不打开资源管理器、不施法、不投放或移动文件。
-module.exports.visitFile=async function(pet,file,{point,token,alive=()=>true,prepareDialogue}) {
+module.exports.visitFile=async function(pet,file,{point,token,alive=()=>true,prepareDialogue,episodeId=null,skipReaction=false}) {
   const valid=()=>alive() && !pet.isDestroyed() && pet.isVisible();
   const cancel=()=>evaluate(pet,function(id){
     const s=sprites[0];if(s.fishDesktopVisitToken!==id)return;
-    s.fishDesktopVisitToken=null;s.stopMove();
+    s.fishDesktopVisitToken=null;s.fishDesktopEpisodeId=null;s.stopMove();
   },token).catch(()=>{});
   if(!valid())throw Error('靠近已取消');
-  const accepted=await evaluate(pet,function(id){
+  const accepted=await evaluate(pet,function(id,episode){
     const s=sprites[0];
     if(!s || s.dragState.active || s.frozen || s.sleeping || s.menuOpen || s.chatOpen || s.pet.fixedEnabled ||
       s.throwRef!=null || s.moveRef!=null || s.posFollow!=null || (s.fishLife?.externalUntil || 0)>Date.now())return false;
-    s.fishDesktopVisitToken=id;return true;
-  },token);
+    s.fishDesktopVisitToken=id;s.fishDesktopEpisodeId=episode;return true;
+  },token,episodeId);
   if(!accepted || !valid()){if(accepted)await cancel();throw Error('桌宠正在处理其它操作');}
   let checking=false,watching=true,invalid=false;
   const changed=p=>!p || p.kind!=='desktop' || p.visible===false || Math.hypot(p.x-point.x,p.y-point.y)>8;
@@ -336,8 +343,10 @@ module.exports.visitFile=async function(pet,file,{point,token,alive=()=>true,pre
     if(!peeked)throw Error('偷偷看文件动作未完整播放');
     if(!valid() || invalid)throw Error('文件图标已移动、隐藏或不可见');
     // 看完之后沿用桌面任务令牌播放收尾，随机动作不会插在两段之间。
-    const reacted=await playWithLine(actions.desktopReaction,'reaction');
-    if(!reacted || !valid() || invalid)throw Error('文件观察收尾被中断');
+    if(!skipReaction){
+      const reacted=await playWithLine(actions.desktopReaction,'reaction');
+      if(!reacted || !valid() || invalid)throw Error('文件观察收尾被中断');
+    }
     await evaluate(pet,function(id,clip){
       const s=sprites[0];if(s.fishDesktopVisitToken!==id || s.dragState.active)throw Error('靠近已取消');
       s.stopMove();s.stopThrow();s.playOnce(clip);
@@ -349,7 +358,7 @@ module.exports.visitFile=async function(pet,file,{point,token,alive=()=>true,pre
   } finally {
     watching=false;clearInterval(timer);
     if(!pet.isDestroyed())await evaluate(pet,function(id){
-      const s=sprites[0];if(s.fishDesktopVisitToken===id)s.fishDesktopVisitToken=null;
+      const s=sprites[0];if(s.fishDesktopVisitToken===id){s.fishDesktopVisitToken=null;s.fishDesktopEpisodeId=null;}
       if(s.fishDesktopDialogue?.id===id)s.fishDesktopDialogue=null;
     },token).catch(()=>{});
   }

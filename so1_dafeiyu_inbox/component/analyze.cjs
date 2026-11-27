@@ -22,7 +22,7 @@ module.exports=async function analyze(req,root,worker,host){
 
 module.exports.desktopDialogue=function desktopDialogue(worker,host){
   let busy=false;
-  return async (file,alive)=>{
+  return async (file,alive,petId)=>{
     if(busy || !alive())return null;
     busy=true;
     const unchanged=async()=>{
@@ -36,7 +36,8 @@ module.exports.desktopDialogue=function desktopDialogue(worker,host){
       const {excerpt}=await worker({action:'desktop_excerpt',file:file.path});
       if(!await unchanged() || !alive())return null;
       const response=await host('POST','/dsh-pet-7340/desktop-dialogue',JSON.stringify({
-        name:file.name.slice(0,180),excerpt:typeof excerpt==='string'?excerpt.slice(0,900):''
+        name:file.name.slice(0,180),excerpt:typeof excerpt==='string'?excerpt.slice(0,900):'',
+        petId
       }));
       if(!alive() || !await unchanged())return null;
       const reply=JSON.parse(response.body);

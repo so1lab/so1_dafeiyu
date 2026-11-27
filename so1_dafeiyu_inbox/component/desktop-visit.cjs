@@ -12,7 +12,7 @@ module.exports=function desktopVisit({pets,life,config,save,dialogue,roots=[app.
     visit.cancelLookup?.();
     visit.pet.webContents.executeJavaScript('('+function(id){
       const s=typeof sprites!=='undefined' && sprites[0];
-      if(s?.fishDesktopVisitToken===id){s.fishDesktopVisitToken=null;s.stopMove();}
+      if(s?.fishDesktopVisitToken===id){s.fishDesktopVisitToken=null;s.fishDesktopEpisodeId=null;s.stopMove();}
     }.toString()+')('+JSON.stringify(visit.id)+')').catch(()=>{});
   }
   async function pump() {
@@ -29,8 +29,13 @@ module.exports=function desktopVisit({pets,life,config,save,dialogue,roots=[app.
     if(!item)return;
     checking=true;const version=generation;
     try {
-      const pet=[...pets.values()].find(p=>!p.isDestroyed() && p.isVisible() && life.canBackground(p));
+      const candidate=[...pets.values()].filter(p=>!p.isDestroyed() && p.isVisible())
+        .map(pet=>({pet,policy:life.memoryPolicy?.(pet) || {}}))
+        .find(({pet,policy})=>life.canBackground(pet,!!policy.stationary));
+      const pet=candidate?.pet,stationary=candidate?.policy.stationary;
       if(!pet){phase='waiting-pet';return;}
+      const record=(type,details={})=>life.record(pet,type,{episodeId:item.episodeId,name:item.name,path:item.path,...details});
+      const decision=(action,...ids)=>life.rememberDecision?.(pet,item.episodeId,action,ids);
       error='';
       const current=()=>!disposed && enabled && generation===version;
       const locate=()=>archive.locate(item.path,pet,['-DesktopOnly']);
@@ -40,7 +45,7 @@ module.exports=function desktopVisit({pets,life,config,save,dialogue,roots=[app.
         phase='waiting-desktop';
       };
       let point;
-      if(item.reacted){
+      if(item.reacted && !stationary){
         phase='locating';
         point=await locate();
         if(!current() || !queue.includes(item))return;
@@ -48,7 +53,7 @@ module.exports=function desktopVisit({pets,life,config,save,dialogue,roots=[app.
         if(!visible(point)){deferLocate();return;}
       }
       const visit={id:randomUUID(),pet,cancelled:false,reason:''};active=visit;
-      const release=life.acquireBackground(pet,()=>cancel('用户任务优先，停止观察'));
+      const release=life.acquireBackground(pet,()=>cancel('用户任务优先，停止观察'),!!stationary);
       if(!release){active=null;phase='waiting-pet';return;}
       const alive=()=>current() && !visit.cancelled && !pet.isDestroyed() && pet.isVisible();
       let lookupTimer;
@@ -61,17 +66,19 @@ module.exports=function desktopVisit({pets,life,config,save,dialogue,roots=[app.
           phase='reacting';
           // 在四秒动作的后半段并行查询，让起跑用到较新的图标位置。
           // 可见时沿用同一个任务占用，省去释放后再申请的保护等待。
-          const lookup=new Promise(resolve=>{
+          const lookup=stationary?null:new Promise(resolve=>{
             visit.cancelLookup=()=>resolve(null);
             lookupTimer=setTimeout(()=>{
               if(!alive()){resolve(null);return;}
               locate().then(point=>resolve({point,at:Date.now()}),()=>resolve(null));
             },2700);
           });
-          await archive.reactToFile(pet,{token:visit.id,alive});
+          if(stationary)decision('observe_in_place',stationary);
+          await archive.reactToFile(pet,{token:visit.id,alive,episodeId:item.episodeId,stationary:!!stationary});
           if(!alive())throw Error(visit.reason || '发现动作已取消');
           item.reacted=true;
-          life.record(pet,'desktop.reacted',{name:item.name,path:item.path});
+          record('desktop.reacted');
+          if(stationary){removeItem();phase='observed';record('desktop.stationary');return;}
           phase='locating';
           const result=await lookup;
           if(!alive())throw Error(visit.reason || '靠近已取消');
@@ -84,15 +91,27 @@ module.exports=function desktopVisit({pets,life,config,save,dialogue,roots=[app.
         if(!queue.includes(item) || !fs.existsSync(item.path)){
           removeItem();phase='skipped';return;
         }
+        const policy=life.memoryPolicy?.(pet) || candidate.policy;
+        if(policy.stationary || stationary){
+          decision('observe_in_place',policy.stationary || stationary);
+          removeItem();phase='observed';record('desktop.stationary');return;
+        }
         phase='approaching';last={...item,x:point.x,y:point.y};
-        life.record(pet,'desktop.target',{name:item.name,path:item.path,x:point.x,y:point.y});
+        record('desktop.target',{x:point.x,y:point.y});
+        decision('approach');
+        const speak=dialogue && config.desktopPeekAI===true;
+        if(speak && policy.quiet)decision('skip_dialogue',policy.quiet);
+        const emotion=policy.disdain;
+        const skipReaction=emotion && (emotion.mode==='off' || (emotion.mode==='less' && life.recentDisdain?.(pet)));
+        if(skipReaction)decision('skip_disdain',emotion.id);
         const landed=await archive.visitFile(pet,item.path,{point,token:visit.id,
-          alive,prepareDialogue:dialogue && config.desktopPeekAI===true ?
-            valid=>dialogue(item,()=>valid() && config.desktopPeekAI===true) : undefined});
+          alive,episodeId:item.episodeId,skipReaction,prepareDialogue:speak && !policy.quiet ?
+            valid=>dialogue(item,()=>valid() && config.desktopPeekAI===true,
+              [...pets.entries()].find(([,window])=>window===pet)?.[0]) : undefined});
         if(!alive())throw Error(visit.reason || '靠近已取消');
         removeItem();
         phase='arrived';last={...item,...landed};
-        life.record(pet,'desktop.arrived',{name:item.name,path:item.path,...landed});
+        record('desktop.arrived',landed);
       }catch(e){
         if(!current())return;
         if(!visit.cancelled && e.code==='DESKTOP_TARGET_UNAVAILABLE'){
@@ -102,7 +121,7 @@ module.exports=function desktopVisit({pets,life,config,save,dialogue,roots=[app.
         if(!item.reacted)item.reactAfter=Date.now()+3000;
         else removeItem();
         phase='cancelled';error=e.message;
-        life.record(pet,'desktop.cancelled',{name:item.name,reason:e.message});
+        record('desktop.cancelled',{reason:e.message});
       }finally{clearTimeout(lookupTimer);if(active===visit)active=null;release();}
     }catch(e){error=e.message;phase='error';}
     finally{checking=false;}
@@ -110,9 +129,9 @@ module.exports=function desktopVisit({pets,life,config,save,dialogue,roots=[app.
   function found(rows) {
     if(!enabled || disposed)return;
     for(const row of rows){
-      const item={...row,at:Date.now()};last=item;
+      const item={...row,at:Date.now(),episodeId:randomUUID()};last=item;
       const pet=[...pets.values()].find(p=>!p.isDestroyed());
-      life.record(pet,'desktop.detected',{name:row.name,path:row.path});
+      life.record(pet,'desktop.detected',{episodeId:item.episodeId,name:row.name,path:row.path});
       queue.push(item);
     }
     // 批量出现时限制行程数量；所有发现仍保留事实，不积压长时间自动走位。

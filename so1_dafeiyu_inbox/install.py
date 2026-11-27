@@ -125,8 +125,11 @@ def install(opts):
     chat_old = b"system: (patch?.system ?? system) + fishAwarenessContext(petId, text),"
     chat_wired = b"system: (patch?.system ?? system) + fishContext,"
     call_plain = b"\t\t\tconst generated = await generateChat({"
-    call_wired = (b"\t\t\tconst fishContext = fishAwarenessContext(petId, text);\n"
+    call_old = (b"\t\t\tconst fishContext = fishAwarenessContext(petId, text);\n"
                   b"\t\t\tconst generated = fishWantsFact(text) ? {ok:true,text:fishGroundedReply(petId,text,'')} : await generateChat({")
+    call_wired = (b"\t\t\tconst fishContext = fishAwarenessContext(petId, text);\n"
+                  b"\t\t\tconst fishMemory = await fishMemoryTurn(petId, text);\n"
+                  b"\t\t\tconst generated = fishMemory !== null ? {ok:true,text:fishMemory} : fishWantsFact(text) ? {ok:true,text:fishGroundedReply(petId,text,'')} : await generateChat({")
     answer_plain = b"\t\t\tif (!generated.ok) return generated;"
     answer_wired = answer_plain + b"\n\t\t\t/* fish grounded reply */ generated.text = fishGroundedReply(petId, text, generated.text);"
     if awareness_start in changed:
@@ -134,7 +137,7 @@ def install(opts):
         b = changed.index(awareness_end,a)+len(awareness_end)
         changed = changed[:a]+changed[b:]
     changed = changed.replace(chat_wired,chat_plain)
-    changed = changed.replace(chat_old,chat_plain).replace(call_wired,call_plain)
+    changed = changed.replace(chat_old,chat_plain).replace(call_wired,call_plain).replace(call_old,call_plain)
     changed = changed.replace(answer_wired,answer_plain)
     if start in changed:
         a = changed.index(start)

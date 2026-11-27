@@ -29,7 +29,7 @@
       if(desktop?.enabled){
         const labels={starting:'正在建立桌面存量快照',watching:'已就绪，等待新文件',locating:'正在查找新文件图标',
           'waiting-pet':'等待桌宠空闲并可移动',reacting:'正在回应新文件',reacted:'已发现文件，准备定位桌面图标','waiting-desktop':'等待桌面图标可见且能够准确定位',
-          approaching:'正在靠近文件',arrived:'已到文件旁边',cancelled:'靠近已取消',skipped:'文件已离开桌面或等待超时',error:'观察暂时不可用'};
+          approaching:'正在靠近文件',arrived:'已到文件旁边',observed:'已在原地观察',cancelled:'靠近已取消',skipped:'文件已离开桌面或等待超时',error:'观察暂时不可用'};
         const summary=document.createElement('small');summary.textContent='桌面观察：'+(labels[desktop.phase] || desktop.phase);desktopStatus.append(summary);
         if(desktop.last){const file=document.createElement('small');file.textContent=desktop.last.name+' · '+desktop.last.path;file.style.overflowWrap='anywhere';desktopStatus.append(file);}
         if(Number.isFinite(desktop.last?.x) && Number.isFinite(desktop.last?.y)){
@@ -51,9 +51,8 @@
         const names={quiet:'安静陪伴',observe:'观察',stretch:'伸展',play:'玩耍',stroll:'散步',rest:'休息',nap:'打盹',wake:'起床',receive:'吞件',walk:'送件步行',place:'投放',magic:'施法',celebrate:'等夸',external:'宿主动作',discover_file:'发现桌面新增文件',approach_file:'小跑靠近桌面文件',peek_file:'偷偷看桌面文件',disdain_file:'一脸嫌弃'};
         const labelsSelf={preparing:'准备',running:'正在',paused:'暂停',completed:'刚刚结束',interrupted:'已被打断',failed:'未成功执行'};
         if(current && status.enabled)row.textContent=(labelsSelf[current.status] || '状态待确认')+' · '+(names[current.activity] || '活动');
-        const detail=document.createElement('small');
-        detail.textContent=`精力${pet.energy>65?'充足':pet.energy>35?'平稳':'偏低'} · ${pet.sleepiness>60?'有点困':'精神还不错'}${pet.home?' · 已记住你放我的位置':''}`;
-        body.append(row,detail);
+        body.append(row);
+        if(pet.home){const detail=document.createElement('small');detail.textContent='已记住你放我的位置';body.append(detail);}
         if(previous){const line=document.createElement('small');line.textContent='刚才：'+(names[previous.activity] || '活动')+'被打断，'+previous.reason+'；'+previous.decision;body.append(line);}
         const resume=panel.querySelector('[data-resume]');resume.hidden=!pet.canResume;
         resume.disabled=!status.enabled || status.quiet || pet.activity==='task';
