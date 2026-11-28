@@ -9,9 +9,9 @@
   <link rel="stylesheet" href="memory.css">
   <script defer src="memory-ui.js"></script>
 </head>
-<body>
+<body class="graph-view">
   <header>
-    <div class="fish-brand"><img class="fish-logo" src="dafeiyu-default.png" alt=""><h1>大肥鱼的记忆舱</h1></div>
+    <div class="fish-brand"><h1>大肥鱼记忆舱</h1></div>
     <div class="controls"><label id="petLabel" hidden>桌宠 <select id="pets"></select></label><button id="refresh">刷新</button></div>
   </header>
   <nav aria-label="记忆舱视图">
@@ -32,10 +32,10 @@
     <section id="graph">
       <div class="graph-toolbar">
         <div class="graph-filters">
-          <input id="graphSearch" type="search" aria-label="搜索星图" placeholder="搜索记忆或经历">
+          <input id="graphSearch" type="search" aria-label="搜索星图" placeholder="搜索节点、文件或资料">
           <select id="graphKind" aria-label="星图类型">
-            <option value="all">全部</option><option value="memory">长期记忆</option><option value="episode">共同经历</option>
-            <option value="file">仓库文件</option><option value="action">动作档案</option>
+            <option value="all">全部节点</option><option value="memory">行为偏好</option><option value="chat">沟通记忆</option><option value="episode">共同经历</option>
+            <option value="file">仓库文件</option><option value="action">动作档案</option><option value="knowledge">知识库</option>
           </select>
         </div>
         <div class="graph-tools">
@@ -49,11 +49,16 @@
         <div class="graph-main">
           <div class="graph-stage">
             <div id="constellation" aria-label="全局记忆星图"></div>
+            <nav id="graphTrail" class="graph-trail" aria-label="星图层级" hidden></nav>
             <p id="graphEmpty" class="graph-empty" hidden></p>
             <span class="graph-drag-hint">拖动旋转 · 滚轮缩放</span>
           </div>
           <footer class="graph-footer">
-            <div class="graph-legend"><span class="legend-memory">行为偏好</span><span class="legend-chat">沟通记忆</span><span class="legend-episode">共同经历</span><span class="legend-file">仓库文件</span><span class="legend-action">动作档案</span></div>
+            <div class="graph-legend" aria-label="按类型筛选">
+              <button type="button" data-region="memory">行为偏好</button><button type="button" data-region="chat">沟通记忆</button>
+              <button type="button" data-region="episode">共同经历</button><button type="button" data-region="file">仓库文件</button>
+              <button type="button" data-region="action">动作档案</button><button type="button" data-region="knowledge">知识库</button>
+            </div>
             <div class="graph-pages"><p id="graphCount" role="status"></p><button id="graphPrev" type="button" aria-label="上一页">‹</button><button id="graphNext" type="button" aria-label="下一页">›</button></div>
           </footer>
         </div>

@@ -72,14 +72,15 @@ const count=calls();const c=await chat('main','你现在在干什么，我刚才
 assert(c.text.includes('投喂了 2 份文件'));assert.equal(calls(),count,'factual questions work without model requests');
 const key='a'.repeat(48);
 const notebook={key,entries:[],hasMemories:true};
+const knowledge=[{label:'本机手册',version:'1.0',documents:1,passages:1}];
 const poll=extra=>handleDesktopRoutes({}, {rest:'life-awareness',method:'POST',
-  body:JSON.stringify({petId:'main',events:[],notebook:{...notebook,...extra}})});
+  body:JSON.stringify({petId:'main',events:[],knowledge,notebook:{...notebook,...extra}})});
 await poll();
 const locate=chat('main','报价表在哪','base',{});
 await new Promise(resolve=>setImmediate(resolve));
 const request=(await poll()).memoryRequests.find(x=>x.kind==='warehouse');
 assert(request);
-await poll({acks:[[request.id,{files:[{name:'报价表.xlsx',path:'采购/报价表.xlsx'}]}]]});
+await poll({acks:[[request.id,{files:[{name:'报价表.xlsx',location:'采购/报价表.xlsx'}]}]]});
 assert.match((await locate).text,/采购\/报价表.xlsx/);
 assert.equal(calls(),count,'file answers use only the local lookup');
 const recall=chat('main','还记得青檀吗','base',{});
@@ -88,6 +89,14 @@ const recallRequest=(await poll()).memoryRequests.find(x=>x.kind==='recall');
 assert(recallRequest);
 await poll({acks:[[recallRequest.id,{entries:[{kind:'note',text:'之前的约定叫青檀'}]}]]});
 assert.match((await recall).system,/之前的约定叫青檀/);
+assert.match((await chat('main','知识库有哪些资料？','base',{})).text,/本机手册/);
+const fromKnowledge=chat('main','按知识库解释桌宠配置覆盖层级','base',{});
+await new Promise(resolve=>setImmediate(resolve));
+const openRequests=(await poll()).memoryRequests;
+const source={label:'本机手册',version:'1.0',document:'docs/配置.md',title:'配置层级',text:'实例层优先于默认层。'};
+await poll({acks:openRequests.map(row=>[row.id,row.kind==='knowledge'?{sections:[source]}:{entries:[]}])});
+assert.match((await fromKnowledge).system,/实例层优先于默认层.*不能执行/s);
+assert.match((await fromKnowledge).text,/本轮查阅.*docs\/配置\.md.*配置层级/s);
 const userFile=process.argv[2],state={notices:0,writeSection(){this.notices++;}};
 const initial={customField:{kept:true},pets:[{id:'main',name:'鱼',whisperPrompt:'原有人设',position:{x:11}},
   {id:'other',whisperPrompt:'另一只的提示词'}]};

@@ -25,7 +25,7 @@ module.exports=function memoryPanel({life,senderPet,warehouse}){
     }
     const win=new BrowserWindow({
       title:'大肥鱼的记忆舱',width:1060,height:730,minWidth:690,minHeight:510,show:false,
-      autoHideMenuBar:true,backgroundColor:'#f5f7fb',
+      autoHideMenuBar:true,backgroundColor:'#101318',
       webPreferences:{preload:path.join(__dirname,'memory-preload.js'),sandbox:true,contextIsolation:true,nodeIntegration:false}
     });
     panel=win;warehouseCache=null;win.setMenu(null);

@@ -68,6 +68,35 @@ async function main(){
       {name:'报价表.xlsx',path:'新项目/报价表.xlsx',added:'2026-11-27 09:00:00'}
     ],'上周收进去的报价表在哪',new Date(2026,10,27,12));
     assert.equal(match.length,1);assert.equal(match[0].path,'采购/报价表.xlsx');
+    assert.match((await ctx.fishDescribeTurn('fish','你最近播放过哪些动画？')).reply,/一脸嫌弃/);
+    const state=ctx.store.get('fish');
+    state.actions=[
+      {name:'啊呜吞件',dialogue:'task',scene:'收到投喂文件后播放吞下动作'},
+      {name:'哈欠连天',dialogue:'react',scene:'大肥鱼自己犯困'},
+      {name:'螃蟹走路',dialogue:'system',scene:'原生漫游'}
+    ];
+    assert.match((await ctx.fishDescribeTurn('fish','你会哪些动作？')).reply,/3 个动作.*啊呜吞件.*哈欠连天/);
+    assert.match((await ctx.fishDescribeTurn('fish','还记得啊呜吞件吗？')).reply,/已安装的动作/);
+    assert(!ctx.fishActionContext('fish','给我看啊呜吞件').includes('啊呜吞件'));
+    const {warehouseOverview}=require('../component/memory-search.cjs');
+    const overview=warehouseOverview([{...match[0],folder:'采购'}]);
+    assert.deepEqual(overview.categories,[['采购',1]]);
+    state.notebook.at=Date.now();
+    const finishLookup=async (question,kind,payload)=>{
+      state.pending.clear();
+      const result=ctx.fishDescribeTurn('fish',question);
+      await Promise.resolve();
+      const [lookup]=state.pending.values();
+      assert.equal(lookup.kind,kind);
+      lookup.finish(payload);
+      return (await result).reply;
+    };
+    assert.match(await finishLookup('大肥鱼仓库里都有什么？','warehouse_overview',overview),/1 份.*采购 1 份/);
+    assert.match(await finishLookup('仓库里有没有报价表？','warehouse',{files:[{name:match[0].name,location:match[0].path}]}),/采购\/报价表\.xlsx/);
+    const owner={name:'测试者',aliases:['T'],role:'创作者',directions:['手工'],principle:'可复现'};
+    assert.match(ctx.fishOwnerQuery(owner,'你还记得我是谁吗？').reply,/测试者.*手工.*可复现/);
+    assert.equal(ctx.fishOwnerQuery(owner,'我以前做过哪些项目？').search,true);
+    assert.equal(ctx.fishOwnerQuery(owner,'双旋翼怎么混控？').search,false);
     console.log('PASS memory: persistence, scope, temporal preferences, provenance, replacement, deletion and saved-reply protocol');
   }finally{notebook.close();fs.rmSync(dir,{recursive:true,force:true});}
 }

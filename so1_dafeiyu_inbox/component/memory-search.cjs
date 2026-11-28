@@ -33,4 +33,18 @@ function warehouseSearch(rows,question,now=new Date()){
   return rank(rows,question,row=>[[row.name,5],[row.folder,2],[row.format,1]],5)
     .map(({name,path,added})=>({name,path,added}));
 }
-module.exports={rank,warehouseSearch,terms};
+
+function warehouseOverview(rows){
+  const categories=new Map();
+  for(const row of rows){
+    const label=row.folder?.split('/')[0];
+    const name=label && label!=='.'?label:'仓库根目录';
+    categories.set(name,(categories.get(name)||0)+1);
+  }
+  return {
+    total:rows.length,
+    categories:[...categories].sort((a,b)=>b[1]-a[1]).slice(0,12),
+    examples:rows.slice(0,5).map(({name,path:location})=>({name,location}))
+  };
+}
+module.exports={rank,warehouseSearch,warehouseOverview,terms};

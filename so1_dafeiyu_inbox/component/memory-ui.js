@@ -15,16 +15,18 @@ const decisions={observe_in_place:'按偏好在原地观察',approach:'小跑靠
 const source={chat:'你在对话中要求记住',panel:'你在记忆舱设置',model:'DeepSeek 提炼建议'};
 let data=null,tab='graph',selected='',currentStep=0,busy=false;
 const graphPageSize=48,zoomLevels=[100,125,160,200];
-let graphFocus='',graphPage=0,graphZoom=0;
+let graphFocus='',graphBranch='',graphPage=0,graphZoom=0;
 let manageLimit=100;
 let starYaw=0,starPitch=0,resetStarCamera=()=>{};
 const regions={
-  memory:{label:'行为偏好',x:-239,y:-89,z:10},
-  chat:{label:'沟通记忆',x:170,y:-113,z:-20},
-  episode:{label:'共同经历',x:82,y:116,z:24},
-  file:{label:'仓库文件',x:-216,y:100,z:-24},
-  action:{label:'动作档案',x:248,y:23,z:43}
+  memory:{label:'行为偏好',x:-238,y:-82,z:16},
+  chat:{label:'沟通记忆',x:-98,y:-137,z:-22},
+  episode:{label:'共同经历',x:90,y:116,z:24},
+  file:{label:'仓库文件',x:-207,y:92,z:-24},
+  action:{label:'动作档案',x:227,y:-9,z:43},
+  knowledge:{label:'知识库',x:127,y:-111,z:12}
 };
+const graphRegion=node=>node.region || (node.kind==='memory' && node.row.key==='note'?'chat':node.kind);
 let lastGraphDecisions=null,liveDecisionIds=new Set(),graphFingerprint='';
 
 function getEpisodes(){
@@ -120,19 +122,54 @@ function graphNodes(episodes){
   const files=(data.warehouseFiles || []).map(row=>({id:'file:'+row.id,kind:'file',title:row.name,row}));
   const actions=[...(data.actions || [])].sort((a,b)=>(b.lastAt || 0)-(a.lastAt || 0) || a.name.localeCompare(b.name,'zh-CN'))
     .map(row=>({id:'action:'+row.name,kind:'action',title:row.name,at:row.lastAt,row}));
-  // Round-robin keeps every populated region represented on the opening page.
-  const lists=[memories,events,files,actions],nodes=[];
-  for(let i=0;i<Math.max(...lists.map(list=>list.length));i++){
-    for(const list of lists)if(list[i])nodes.push(list[i]);
+  const knowledge=(data.knowledge || []).map(row=>({id:'knowledge:'+row.id,kind:'knowledge',title:row.label,row}));
+  return [...memories,...events,...files,...actions,...knowledge];
+}
+function graphTree(episodes){
+  const records=graphNodes(episodes),byId=new Map(),children=new Map();
+  function add(node,parent){
+    if(byId.has(node.id))return;
+    byId.set(node.id,{...node,parent});
+    if(!children.has(parent))children.set(parent,[]);
+    children.get(parent).push(byId.get(node.id));
   }
-  return nodes;
+  for(const [region,{label}] of Object.entries(regions))add({id:'region:'+region,kind:'region',region,title:label,row:{}},'');
+  for(const node of records){
+    const region=graphRegion(node);
+    let parent='region:'+region;
+    if(node.kind==='file'){
+      const folders=String(node.row.folder || node.row.path || '').split('/');
+      if(!node.row.folder)folders.pop();
+      const prefixes=[];
+      for(const folder of folders.filter(name=>name && name!=='.')){
+        prefixes.push(folder);
+        const relative=prefixes.join('/'),id='folder:'+relative;
+        add({id,kind:'folder',region,title:folder,row:{path:relative}},parent);
+        parent=id;
+      }
+    }
+    add(node,parent);
+    if(node.kind==='knowledge'){
+      for(const document of node.row.documents){
+        const id=node.id+'/doc/'+document;
+        const title=document.replace(/\/$/u,'').split('/').at(-1);
+        const sections=node.row.sections?.[document]||[];
+        add({id,kind:'document',region,title,row:{path:document,library:node.title,version:node.row.version}},node.id);
+        sections.forEach((section,index)=>add({id:id+'/section/'+index,kind:'section',region,title:section.title,
+          row:{...section,path:document,library:node.title,version:node.row.version}},id));
+      }
+    }
+    if(node.kind==='episode')node.row.events.forEach((event,index)=>add({id:'event:'+event.id,kind:'event',region,
+      title:event.details.line || event.text,at:event.at,row:{event,episode:node.row.id,index}},node.id));
+  }
+  return {records,byId,children};
 }
 function filteredStars(nodes){
   const query=$('graphSearch').value.trim().normalize('NFKC').toLocaleLowerCase();
   const kind=$('graphKind').value;
-  return nodes.filter(node=>(kind==='all' || kind===node.kind) && (!query ||
+  return nodes.filter(node=>(kind==='all' || kind===graphRegion(node)) && (!query ||
     [node.title,node.at?time.format(node.at):'',node.row.label,node.row.evidence,source[node.row.source],
-      node.row.path,node.row.format,node.row.scene,...(node.row.correctedFrom || []),
+      node.row.path,node.row.format,node.row.scene,node.row.version,...(node.row.correctedFrom || []),
       ...(node.row.events || []).map(e=>e.details.line || e.text)]
       .some(v=>String(v||'').normalize('NFKC').toLocaleLowerCase().includes(query))));
 }
@@ -147,20 +184,60 @@ function setGraphZoom(level,center=false){
   $('graphZoomReset').textContent=ratio+'%';
   if(center)view.scrollTo(view.scrollWidth*x-view.clientWidth/2,view.scrollHeight*y-view.clientHeight/2);
 }
-function drawGraph(episodes){
+function drawGraph(episodes,animateBranch=false){
   const view=$('constellation'),details=$('graphDetail');
-  const nodes=graphNodes(episodes),byId=new Map(nodes.map(node=>[node.id,node]));
-  const filtered=filteredStars(nodes);
-  const pages=Math.max(1,Math.ceil(filtered.length/graphPageSize));
+  const focusedStar=view.contains(document.activeElement)?document.activeElement.dataset.star:'';
+  const {records,byId,children}=graphTree(episodes);
+  if(graphBranch && !children.has(graphBranch))graphBranch=graphFocus='';
+  const branch=byId.get(graphBranch);
+  const query=$('graphSearch').value.trim();
+  const activeRegion=$('graphKind').value;
+  const showCore=!branch && activeRegion==='all' && !query;
+  const hubs=(children.get('')||[]).filter(hub=>children.has(hub.id));
+  const groups=hubs.map(hub=>children.get(hub.id));
+  const overviewNodes=[];
+  for(let i=0;i<Math.max(0,...groups.map(group=>group.length));i++)for(const group of groups)if(group[i])overviewNodes.push(group[i]);
+  const filtered=branch?children.get(branch.id):query?filteredStars([...byId.values()]):filteredStars(overviewNodes);
+  const pageSize=branch?20:graphPageSize;
+  const anchors=branch?[branch]:showCore?hubs:[];
+  document.querySelectorAll('[data-region]').forEach(control=>{
+    const id='region:'+control.dataset.region;
+    control.setAttribute('aria-pressed',String(control.dataset.region===(branch?.region || activeRegion)));
+    control.disabled=!children.has(id);
+    control.onclick=()=>openBranch(graphBranch===id?'':id);
+  });
+  const pages=Math.max(1,Math.ceil(filtered.length/pageSize));
   graphPage=Math.min(graphPage,pages-1);
-  const visible=filtered.slice(graphPage*graphPageSize,(graphPage+1)*graphPageSize);
-  if(graphFocus!=='core' && !visible.some(node=>node.id===graphFocus))graphFocus='';
+  const visible=filtered.slice(graphPage*pageSize,(graphPage+1)*pageSize);
+  if(graphFocus!=='core' && ![...visible,...anchors].some(node=>node.id===graphFocus))graphFocus=branch?.id || '';
   const empty=$('graphEmpty');
   empty.hidden=visible.length>0;
-  empty.textContent=nodes.length?'没有匹配的星星':'大肥鱼还没有记录到记忆或经历';
+  empty.textContent=records.length?'没有匹配的星星':'大肥鱼还没有记录到记忆或经历';
   $('graphCount').textContent=filtered.length+' 颗星'+(pages>1?' · '+(graphPage+1)+' / '+pages:'');
   $('graphPrev').disabled=graphPage===0;
   $('graphNext').disabled=graphPage>=pages-1;
+
+  function openBranch(id,focus=id){
+    const index=(children.get(id)||[]).findIndex(node=>node.id===focus);
+    graphBranch=id;graphFocus=focus;graphPage=Math.floor(Math.max(0,index)/20);graphZoom=0;
+    $('graphSearch').value='';$('graphKind').value='all';
+    starYaw=starPitch=0;
+    drawGraph(episodes,Boolean(id));
+    const focusId=focus || 'core';
+    view.querySelectorAll('[data-star]').forEach(star=>{
+      if(star.dataset.star===focusId)star.focus({preventScroll:true});
+    });
+  }
+  const trail=$('graphTrail'),parents=[];
+  for(let item=branch;item;item=byId.get(item.parent))parents.unshift(item);
+  trail.hidden=!branch;
+  trail.replaceChildren();
+  if(branch){
+    trail.append(button('全图',()=>openBranch('')));
+    parents.forEach(item=>{
+      trail.append(el('span','›','trail-divider'),item.id===branch.id?el('strong',item.title):button(item.title,()=>openBranch(item.id)));
+    });
+  }
 
   const svg=(tag,attrs={})=>{
     const node=document.createElementNS('http://www.w3.org/2000/svg',tag);
@@ -168,43 +245,43 @@ function drawGraph(episodes){
     return node;
   };
   const map=svg('svg',{viewBox:'0 0 900 470',role:'group','aria-label':'大肥鱼的全局记忆星图'});
-  const defs=svg('defs');
-  for(const [kind,light,mid,dark] of [
-    ['memory','#e8ffff','#62e3e1','#105363'],
-    ['chat','#ffedf9','#eb7cb9','#5a2348'],
-    ['episode','#fbebff','#a28aed','#332070'],
-    ['file','#fff6ce','#edbd62','#53351a'],
-    ['action','#e5f2ff','#75baff','#214a74'],
-    ['core','#e9feff','#6aaee9','#13284a']
-  ]){
-    const gradient=svg('radialGradient',{id:'star-'+kind,cx:'34%',cy:'26%',r:'77%'});
-    for(const [offset,color] of [['0%',light],['34%',mid],['100%',dark]]){
-      gradient.append(svg('stop',{offset,'stop-color':color}));
-    }
-    defs.append(gradient);
-  }
-  map.append(defs);
-  // A fixed seed keeps the decorative star field from flashing during search and refresh.
+  if(animateBranch)map.classList.add('branch-enter');
+  // Keep the background fixed while the actual nodes rotate or filter.
+  const guides=svg('g',{class:'sky-guides','aria-hidden':'true'});
+  for(const [rx,ry] of [[96,52],[182,101],[275,150],[359,195]])guides.append(svg('ellipse',{cx:450,cy:218,rx,ry}));
+  guides.append(svg('path',{d:'M 32 218 H 868 M 450 18 V 435'}));
+  map.append(guides);
   const dust=svg('g',{class:'sky-dust','aria-hidden':'true'});
   let seed=2841;
   const random=()=>{seed=(seed*16807)%2147483647;return seed/2147483647;};
-  for(let i=0;i<155;i++){
+  for(let i=0;i<98;i++){
     dust.append(svg('circle',{cx:(random()*900).toFixed(1),cy:(random()*470).toFixed(1),
-      r:(.35+random()*1.25).toFixed(1),opacity:(.15+random()*.64).toFixed(2)}));
+      r:(.25+random()*.8).toFixed(1),opacity:(.12+random()*.39).toFixed(2)}));
   }
   map.append(dust);
-  const clusterOf=node=>node.kind==='memory' && node.row.key==='note'?'chat':node.kind;
   const positions=new Map();
-  for(const [kind,{x,y,z}] of Object.entries(regions)){
-    const cluster=visible.filter(node=>clusterOf(node)===kind);
-    const cy=kind==='episode'?y-9:y;
+  if(branch){
+    positions.set(branch.id,[0,0,0]);
+    visible.forEach((node,i)=>{
+      const inside=visible.length>11 && i<7;
+      const index=visible.length>11 && !inside?i-7:i;
+      const count=visible.length<=11?visible.length:inside?7:visible.length-7;
+      const angle=-Math.PI/2+2*Math.PI*index/count+(inside?.15:0);
+      const radius=visible.length===1?127:inside?132:Math.min(268,148+visible.length*7);
+      positions.set(node.id,[Math.cos(angle)*radius,Math.sin(angle)*radius*.57,Math.cos(i*2)*30]);
+    });
+  }else for(const [kind,{x,y,z}] of Object.entries(regions)){
+    const cluster=visible.filter(node=>graphRegion(node)===kind);
+    const cx=activeRegion===kind?0:x,cy=activeRegion===kind?0:y;
+    if(showCore && anchors.some(node=>node.region===kind))positions.set('region:'+kind,[x,y,z]);
     cluster.forEach((node,i)=>{
-      const angle=i*2.39996+.6,spread=14+Math.sqrt(i)*Math.min(14,84/Math.sqrt(cluster.length));
-      positions.set(node.id,[x+Math.cos(angle)*spread*1.32,cy+Math.sin(angle)*spread*.53,z+Math.sin(i*2.02)*62]);
+      const angle=i*2.39996+.6;
+      const spread=activeRegion===kind?55+Math.sqrt(i)*23:34+Math.sqrt(i)*Math.min(15,78/Math.sqrt(cluster.length));
+      positions.set(node.id,[cx+Math.cos(angle)*spread*1.32,cy+Math.sin(angle)*spread*.68,z+Math.sin(i*2.02)*50]);
     });
   }
-  positions.set('core',[0,-12,0]);
-  // 只画有决策回执的引用。每一对节点只画一条线，详情仍列出每次动作。
+  if(showCore)positions.set('core',[0,-12,0]);
+  // 归属线和有实际回执的关联分别绘制，详情只列出可核对的关联。
   const links=new Map();
   const references=new Map();
   function connect(from,to,label,live=false){
@@ -236,27 +313,23 @@ function drawGraph(episodes){
   }
   const edges=svg('g',{'aria-hidden':'true'});
   const paths=[];
+  function branchLink(from,to){
+    if(!positions.has(from) || !positions.has(to))return;
+    const path=svg('path',{class:branch?'branch-link expanded':'branch-link','data-tone':graphRegion(byId.get(to))});
+    paths.push({from,to,path,branch:true});edges.append(path);
+  }
+  if(branch)visible.forEach(node=>branchLink(branch.id,node.id));
+  if(showCore){
+    for(const hub of anchors)branchLink('core',hub.id);
+    for(const node of visible)branchLink(node.parent,node.id);
+  }
   for(const {from,to,live} of links.values()){
     if(!positions.has(from) || !positions.has(to))continue;
     const path=svg('path',{class:live?'star-link recent-hit':'star-link'});
     paths.push({from,to,path});edges.append(path);
   }
   map.append(edges);
-  const stars=new Map(),layer=svg('g'),regionLayer=svg('g',{'aria-hidden':'true'});
-  const regionMarks=new Map();
-  for(const [kind,{label,x,y,z}] of Object.entries(regions)){
-    if(!visible.some(node=>clusterOf(node)===kind))continue;
-    const mark=svg('g',{class:'region region-'+kind});
-    const text=svg('text',{y:-35});text.textContent=label;
-    for(let i=0;i<62;i++){
-      const angle=random()*Math.PI*2,spread=Math.sqrt(random());
-      mark.append(svg('circle',{cx:Math.cos(angle)*spread*119,cy:Math.sin(angle)*spread*50,
-        r:.55+random()*1.3,opacity:.15+random()*.38}));
-    }
-    mark.append(text);regionLayer.append(mark);
-    regionMarks.set(mark,[x,y,z]);
-  }
-  map.insertBefore(regionLayer,edges);
+  const stars=new Map(),layer=svg('g');
   map.append(layer);
   function project(){
     const cosYaw=Math.cos(starYaw),sinYaw=Math.sin(starYaw);
@@ -269,10 +342,6 @@ function drawGraph(episodes){
       const scale=780/(780-front);
       return {x:450+across*scale,y:218+vertical*scale,z:front,s:scale};
     }
-    for(const [mark,coords] of regionMarks){
-      const p=position(coords);
-      mark.setAttribute('transform',`translate(${p.x} ${p.y}) scale(${p.s})`);
-    }
     for(const [id,coords] of positions){
       const p=position(coords),focused=id===graphFocus;
       if(focused)p.s*=1.35;
@@ -283,40 +352,57 @@ function drawGraph(episodes){
     }
     const sorted=[...projected.keys()].sort((a,b)=>projected.get(a).z-projected.get(b).z);
     sorted.forEach((id,index)=>{const star=stars.get(id);if(layer.children[index]!==star)layer.insertBefore(star,layer.children[index] || null);});
-    for(const {from,to,path} of paths){
+    for(const {from,to,path,branch:membership} of paths){
       const a=projected.get(from),b=projected.get(to);
-      path.setAttribute('d',`M ${a.x} ${a.y} Q ${(a.x+b.x)/2} ${Math.min(a.y,b.y)-35} ${b.x} ${b.y}`);
+      const midX=(a.x+b.x)/2,midY=membership?(a.y+b.y)/2-7:Math.min(a.y,b.y)-35;
+      path.setAttribute('d',`M ${a.x} ${a.y} Q ${midX} ${midY} ${b.x} ${b.y}`);
     }
   }
   function jumpTo(id){
-    let index=filtered.indexOf(byId.get(id));
+    const node=byId.get(id);
+    if(!node)return;
+    if(children.has(id)){openBranch(id);return;}
+    const index=filtered.indexOf(node);
     if(index<0){
-      $('graphSearch').value='';$('graphKind').value='all';
-      index=nodes.indexOf(byId.get(id));
+      openBranch(node.parent,id);return;
     }
     graphFocus=id;
-    graphPage=Math.floor(index/graphPageSize);
+    graphPage=Math.floor(index/pageSize);
     drawGraph(episodes);
     [...view.querySelectorAll('[role="button"]')].find(node=>node.dataset.star===id)?.focus();
+  }
+  function overview(){
+    const grid=el('div','','map-summary');
+    for(const [key,{label}] of Object.entries(regions)){
+      const count=records.filter(node=>graphRegion(node)===key).length;
+      const item=button(label,()=>openBranch('region:'+key),'summary-row');
+      item.dataset.tone=key;
+      item.disabled=count===0;
+      item.append(el('span',String(count)));
+      grid.append(item);
+    }
+    details.append(el('h2','记忆总览'),grid);
   }
   function show(id){
     graphFocus=id;
     const node=byId.get(id),related=references.get(id);
+    const subitems=children.get(id)||[];
     const focused=document.activeElement;
     for(const [key,star] of stars){
       star.setAttribute('aria-pressed',String(key===id));
       star.classList.toggle('related',Boolean(related?.has(key)));
-      star.classList.toggle('dimmed',Boolean(id && key && key!==id && !related?.has(key)));
+      const directFamily=key===node?.parent || byId.get(key)?.parent===id;
+      star.classList.toggle('dimmed',Boolean(id && key && key!==id && !related?.has(key) && !directFamily));
     }
     for(const link of paths)link.path.classList.toggle('highlight',id===link.from || id===link.to);
     project();
     if(focused?.matches('.star') && focused.isConnected)focused.focus({preventScroll:true});
     details.replaceChildren();
     if(!id){
-      details.append(el('h2','记忆动态'),el('p','点选星点查看来源和关联。','hint'));
+      overview();
       if(data.warehouseFiles===null)details.append(el('p','暂时无法读取仓库台账。','hint'));
       const recent=data.decisions.filter(row=>byId.has('episode:'+row.episode)).slice(0,8);
-      if(!recent.length)details.append(el('p','有新的桌面决策时会在这里显示。','hint'));
+      if(recent.length)details.append(el('h3','最近关联','related-title'));
       for(const row of recent){
         const target='episode:'+row.episode;
         const item=button(decisions[row.action] || row.action,()=>jumpTo(target),'related-star');
@@ -325,17 +411,39 @@ function drawGraph(episodes){
       }
       return;
     }
-    const close=button('×',()=>{show('');stars.get(id)?.focus({preventScroll:true});},'drawer-close');
+    const close=button('×',()=>{
+      if(branch?.id===id){openBranch(branch.parent,branch.parent);return;}
+      show(branch?.id || '');stars.get(id)?.focus({preventScroll:true});
+    },'drawer-close');
     close.setAttribute('aria-label','收起星图详情');
     details.append(close);
     if(!node){
-      details.append(el('h2','大肥鱼'),el('p',[
-        [nodes.filter(node=>node.kind==='memory').length,'条长期记忆'],
-        [episodes.length,'段近期经历'],[(data.warehouseFiles || []).length,'份仓库文件'],[(data.actions || []).length,'个动作']
-      ].map(([n,label])=>n+' '+label).join(' · '),'graph-meta'));
+      overview();
       return;
     }
-    details.append(el('p',({memory:'长期记忆',episode:'共同经历',file:'仓库文件',action:'动作档案'})[node.kind],'graph-meta'));
+    const labels={memory:'长期记忆',episode:'共同经历',file:'仓库文件',action:'动作档案',knowledge:'本地知识库',
+      region:'分类',folder:'仓库目录',document:'来源文档',section:'文档章节',event:'经历节点'};
+    details.append(el('p',labels[node.kind],'graph-meta'));
+    if(node.kind==='region' || node.kind==='folder'){
+      details.append(el('h2',node.title));
+      if(node.row.path)details.append(el('p',node.row.path,'hint'));
+    }
+    if(node.kind==='knowledge'){
+      const {version,documents,passages}=node.row;
+      details.append(el('h2',node.title),el('p',version+' · '+documents.length+' 项来源 · '+passages+' 段','hint'));
+    }
+    if(node.kind==='document' || node.kind==='section'){
+      const {library,path,version,passages}=node.row;
+      details.append(el('h2',node.title),el('p',library+' · '+version,'hint'),el('p',path,'hint'));
+      if(passages)details.append(el('p',passages+' 个已索引片段','hint'));
+    }
+    if(node.kind==='event'){
+      details.append(el('h2',node.title),el('p',time.format(node.at),'hint'));
+      if(node.row.event.details.clip)details.append(el('p','动作 · '+node.row.event.details.clip,'hint'));
+      details.append(button('回放到这一步',()=>{
+        selected=node.row.episode;currentStep=node.row.index;$('onlyToday').checked=false;switchTab('today');
+      }));
+    }
     if(node.kind==='memory')details.append(recordCard(node.row));
     if(node.kind==='episode'){
       details.append(el('h2',node.title),el('p',time.format(node.at)+' · '+node.row.events.length+' 条记录','hint'));
@@ -346,7 +454,7 @@ function drawGraph(episodes){
     if(node.kind==='file'){
       const {path,format,added,correctedFrom}=node.row;
       details.append(el('h2',node.title),el('p',path,'hint'),el('p',[format,added].filter(Boolean).join(' · '),'hint'));
-      if(correctedFrom.length)details.append(el('p','曾从 '+correctedFrom.join('、')+' 调整到当前目录。','decision'));
+      if(correctedFrom?.length)details.append(el('p','曾从 '+correctedFrom.join('、')+' 调整到当前目录。','decision'));
     }
     if(node.kind==='action'){
       const {scene,runs,lastAt,lastStatus,lastReason,preview}=node.row;
@@ -359,27 +467,42 @@ function drawGraph(episodes){
         video.controls=true;video.muted=true;video.preload='none';video.src=clipUrl(node.title);details.append(video);
       }
     }
-    details.append(el('h3','关联记录','related-title'));
-    if(!related?.size)details.append(el('p','暂无关联记录。','hint'));
-    else for(const [target,actions] of related){
-      const link=button(byId.get(target).title,()=>jumpTo(target),'related-star');
-      link.append(el('small',[...actions].join(' · ')));details.append(link);
+    if(subitems.length){
+      details.append(el('h3','子项 · '+subitems.length,'related-title'));
+      const pageItems=branch?.id===id?visible:subitems.slice(0,20);
+      for(const item of pageItems)details.append(button(item.title,()=>jumpTo(item.id),'related-star branch-item'));
+    }
+    if(related?.size){
+      details.append(el('h3','关联记录','related-title'));
+      for(const [target,actions] of related){
+        const link=button(byId.get(target).title,()=>jumpTo(target),'related-star');
+        link.append(el('small',[...actions].join(' · ')));details.append(link);
+      }
     }
     details.scrollTop=0;
   }
   function makeStar(id,label,kind,index){
     const star=svg('g',{class:'star star-'+kind,tabindex:'0',role:'button','aria-label':label,'data-star':id});
-    const core=kind==='core',radius=core?36:Math.max(4.3,9-index*.1);
+    const core=kind==='core',hub=anchors.some(node=>node.id===id),hasChildren=children.has(id);
+    const radius=core?13:hub?10:hasChildren?7:Math.max(3,5.4-index*.04);
+    if(hub || branch && visible.length<=10)star.classList.add('star-caption');
+    if(hasChildren){
+      star.classList.add('star-parent');
+      star.setAttribute('aria-expanded',String(branch?.id===id));
+      star.setAttribute('aria-label',label+'，'+children.get(id).length+' 个子项');
+    }
     if(paths.some(link=>(link.from===id || link.to===id) && link.path.classList.contains('recent-hit')))star.classList.add('recent-hit');
     const title=svg('title');title.textContent=label;
-    star.append(title,svg('circle',{class:'star-halo',r:radius+13}),svg('circle',{class:'star-disk',r:radius,fill:`url(#star-${kind})`}));
-    if(core)star.append(svg('image',{href:'dafeiyu-default.png',x:-39,y:-39,width:78,height:78}));
-    const letters=Array.from(label),limit=11;
-    const caption=svg('text',{y:radius+20});
+    star.append(title,svg('circle',{class:'star-hit',r:core?28:14}),
+      svg('circle',{class:'star-halo',r:radius+(core?10:5)}),svg('circle',{class:'star-disk',r:radius}));
+    if(core || hasChildren)star.append(svg('path',{class:'core-mark',d:branch?.id===id?'M -3 0 H 3':'M -3 0 H 3 M 0 -3 V 3'}));
+    const letters=Array.from(label),limit=hub?13:10;
+    const caption=svg('text',{y:radius+17});
     caption.textContent=letters.length>limit?letters.slice(0,limit).join('')+'…':label;
     star.append(caption);
-    star.onclick=()=>{if(!ignoreClick)show(id);};
-    star.onkeydown=e=>{if(e.key==='Enter' || e.key===' '){e.preventDefault();show(id);}};
+    const activate=()=>{if(hasChildren && branch?.id!==id)openBranch(id);else show(id);};
+    star.onclick=()=>{if(!ignoreClick)activate();};
+    star.onkeydown=e=>{if(e.key==='Enter' || e.key===' '){e.preventDefault();activate();}};
     stars.set(id,star);layer.append(star);
   }
   let drag=null,ignoreClick=false;
@@ -404,14 +527,16 @@ function drawGraph(episodes){
     e.preventDefault();
     setGraphZoom(Math.max(0,Math.min(zoomLevels.length-1,graphZoom+(e.deltaY<0?1:-1))),true);
   },{passive:false});
-  resetStarCamera=()=>{starYaw=starPitch=0;show('');setGraphZoom(0);view.scrollTo(0,0);};
+  resetStarCamera=()=>{starYaw=starPitch=0;show(branch?.id || '');setGraphZoom(0);view.scrollTo(0,0);};
   details.onkeydown=e=>{if(e.key==='Escape' && graphFocus)details.querySelector('.drawer-close')?.click();};
   map.onkeydown=details.onkeydown;
-  makeStar('core','大肥鱼','core',0);
-  visible.forEach((node,i)=>makeStar(node.id,node.title,clusterOf(node),i));
+  if(showCore)makeStar('core','记忆总览','core',0);
+  anchors.forEach(node=>makeStar(node.id,node.title,graphRegion(node),0));
+  visible.forEach((node,i)=>makeStar(node.id,node.title,graphRegion(node),i));
   view.replaceChildren(map);
   setGraphZoom(graphZoom);
   show(graphFocus);
+  if(focusedStar)stars.get(focusedStar)?.focus({preventScroll:true});
 }
 function drawMemories(){
   if(!data?.available)return;
@@ -460,7 +585,7 @@ function apply(next,background=false){
   const ids=new Set((next?.decisions || []).map(row=>row.id).filter(Boolean));
   liveDecisionIds=new Set(lastGraphDecisions?[...ids].filter(id=>!lastGraphDecisions.has(id)):[]);
   lastGraphDecisions=ids;
-  const fingerprint=JSON.stringify([next?.id,next?.available,next?.timeline,next?.memories,next?.decisions,next?.actions,next?.warehouseFiles]);
+  const fingerprint=JSON.stringify([next?.id,next?.available,next?.timeline,next?.memories,next?.decisions,next?.actions,next?.warehouseFiles,next?.knowledge]);
   const changed=fingerprint!==graphFingerprint;
   graphFingerprint=fingerprint;
   data=next;
@@ -491,6 +616,7 @@ async function change(request){
 }
 function switchTab(next){
   tab=next;
+  document.body.classList.toggle('graph-view',tab==='graph');
   document.querySelectorAll('[data-tab]').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.tab===tab)));
   for(const id of ['today','graph','manage'])$(id).hidden=tab!==id;
   if(tab!=='today')$('episode').replaceChildren();
@@ -499,8 +625,8 @@ function switchTab(next){
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
 window.fishNotebook.onFocusGraph?.(()=>{if(tab!=='graph')switchTab('graph');});
 $('refresh').onclick=()=>load(data?.id);
-$('pets').onchange=()=>{selected='';currentStep=0;graphFocus='';graphPage=0;manageLimit=100;lastGraphDecisions=null;void load($('pets').value);};
-$('graphSearch').oninput=$('graphKind').onchange=()=>{graphPage=0;graphFocus='';render();};
+$('pets').onchange=()=>{selected='';currentStep=0;graphFocus=graphBranch='';graphPage=0;manageLimit=100;lastGraphDecisions=null;void load($('pets').value);};
+$('graphSearch').oninput=$('graphKind').onchange=()=>{graphPage=0;graphFocus=graphBranch='';render();};
 $('graphPrev').onclick=()=>{graphPage--;graphFocus='';render();};
 $('graphNext').onclick=()=>{graphPage++;graphFocus='';render();};
 $('graphZoomOut').onclick=()=>setGraphZoom(Math.max(0,graphZoom-1),true);

@@ -6,7 +6,7 @@ const core = require('./life-core.cjs'), pulse = require('./life-renderer.cjs');
 const walk = require('./actions.json').walk;
 const taskGuard=require('./task-guard.cjs');
 const catalog=require('./action-catalog.json').actions;
-const {warehouseSearch}=require('./memory-search.cjs');
+const {warehouseSearch,warehouseOverview}=require('./memory-search.cjs');
 
 module.exports = function startLife({pets, data, config, save, host, warehouse}) {
   const file=path.join(data,'life-state.json');
@@ -20,6 +20,7 @@ module.exports = function startLife({pets, data, config, save, host, warehouse})
   let notebook=null;
   try{notebook=require('./pet-memory.cjs')(data);}
   catch(e){console.warn('[fish-memory] 本地记忆库不可用',e.message);}
+  const knowledge=require('./knowledge.cjs')(data);
   const memoryAcks=new Map(),suggestions=new Map();
   let publishing=false,publishAgain=false;
   const petId=pet=>latest.get(pet)?.id || [...pets.entries()].find(([,p])=>p===pet)?.[0] || (pets.size===1?'main':null);
@@ -46,8 +47,9 @@ module.exports = function startLife({pets, data, config, save, host, warehouse})
         const shared=value=>Array.isArray(value)?value.map(shared):value&&typeof value==='object'?
           Object.fromEntries(Object.entries(value).filter(([key])=>key!=='path' && key!=='line').map(([key,v])=>[key,shared(v)])):value;
         const reply=await host('POST','/dsh-pet-7340/life-awareness',JSON.stringify(shared({petId:id,current,previous,events,since,
-          actions:!since && id==='main'?catalog.filter(row=>availableClips.includes(row.name) && ['react','topic','request'].includes(row.dialogue))
+          actions:!since && id==='main'?catalog.filter(row=>availableClips.includes(row.name))
             .map(({name,dialogue,scene})=>({name,dialogue,scene})):undefined,
+          knowledge:id==='main'?knowledge.libraries().map(({label,version,documents,passages})=>({label,version,documents:documents.length,passages})):undefined,
           notebook:notebook?{key:notebook.bridgeKey,entries:[],suggest:config.memorySuggestions===true,
             hasMemories:notebook.hasMemories(id),acks:[...(memoryAcks.get(id)||new Map())].filter(([,value])=>value!==undefined)}:null})));
         const result=JSON.parse(reply.body);
@@ -73,11 +75,18 @@ module.exports = function startLife({pets, data, config, save, host, warehouse})
       try{ack({entries:notebook.chatContext(id,request.text)});}
       catch{ack(null);}
       publishAgain=true;
-    } else if(request.kind==='warehouse' && typeof request.text==='string' && typeof warehouse==='function'){
+    } else if(request.kind==='knowledge' && id==='main' && typeof request.text==='string'){
+      ack({sections:knowledge.search(request.text)});publishAgain=true;
+    } else if(['warehouse','warehouse_overview'].includes(request.kind) && typeof request.text==='string' && typeof warehouse==='function'){
       // Reserve the request while the worker runs. Pending reservations are never sent as receipts.
       ack(undefined);
       void warehouse().then(result=>{
-        if(!disposed)ack({files:warehouseSearch(result.files,request.text)});
+        if(disposed)return;
+        if(!Array.isArray(result?.files)){ack(null);return;}
+        if(request.kind==='warehouse_overview'){ack(warehouseOverview(result.files));return;}
+        // 保留台账里的仓库相对位置，经历同步仍会过滤绝对路径字段。
+        const files=warehouseSearch(result.files,request.text).map(({name,path:location})=>({name,location}));
+        ack({files});
       }).catch(()=>{if(!disposed)ack(null);}).finally(()=>{if(!disposed)void publish();});
     } else if(request.kind==='write'){
       try{
@@ -281,6 +290,7 @@ module.exports = function startLife({pets, data, config, save, host, warehouse})
       actions:[...byClip.values()],
       timeline:recent.map(({id,at,type,text,details})=>({id,at,type,text,details:{
         episodeId:details.episodeId,runId:details.runId,batch:details.batch,clip:details.clip,name:details.name,line:details.line}})),
+      knowledge:id==='main'?knowledge.outline():[],
       ...notebook.snapshot(id,[...new Set(recent.map(e=>e.details.episodeId).filter(Boolean))])};
   }
   function memoryChange(id,request){
